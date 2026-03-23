@@ -5,6 +5,8 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  /** Base64 data URL of an attached image (user messages only) */
+  image?: string;
 }
 
 // ── Model Message (sent to the LLM API) ────────────────────

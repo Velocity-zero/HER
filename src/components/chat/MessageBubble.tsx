@@ -15,8 +15,10 @@ interface MessageBubbleProps {
 
 export default function MessageBubble({ message, showTimestamp = false, index = 0 }: MessageBubbleProps) {
   const isUser = message.role === "user";
-  const isShort = message.content.length <= 40;
-  const isLong = message.content.length > 600;
+  const hasImage = !!message.image;
+  const hasText = message.content.length > 0 && message.content !== "(shared a photo)";
+  const isShort = !hasImage && message.content.length <= 40;
+  const isLong = !hasImage && message.content.length > 600;
 
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "numeric",
@@ -39,8 +41,12 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
 
       {/* Bubble */}
       <div
-        className={`message-content rounded-[18px] text-[13.5px] leading-[1.65] sm:rounded-[20px] sm:text-[14.5px] sm:leading-[1.7] ${
-          isShort
+        className={`message-content rounded-[18px] sm:rounded-[20px] ${
+          hasImage && !hasText
+            ? "max-w-[75%] overflow-hidden p-1 sm:max-w-[65%] sm:p-1.5 md:max-w-[50%]"
+            : hasImage && hasText
+            ? "max-w-[85%] overflow-hidden p-1 sm:max-w-[80%] sm:p-1.5 md:max-w-[70%]"
+            : isShort
             ? "max-w-[75%] px-4 py-2.5 sm:max-w-[65%] sm:px-[18px] sm:py-[11px] md:max-w-[50%]"
             : isLong
             ? "max-w-[88%] px-4 py-3 sm:max-w-[82%] sm:px-[18px] sm:py-[14px] md:max-w-[75%]"
@@ -51,13 +57,27 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
             : "rounded-bl-lg bg-her-ai-bubble/85 text-her-text shadow-[0_1px_4px_rgba(180,140,110,0.07)]"
         }`}
       >
-        {/* Whitespace-aware rendering for multi-paragraph messages */}
-        {message.content.split("\n").map((line, i) => (
-          <span key={i}>
-            {i > 0 && <br />}
-            {line}
-          </span>
-        ))}
+        {/* Image */}
+        {hasImage && (
+          <img
+            src={message.image}
+            alt="Shared photo"
+            className={`w-full rounded-[14px] object-cover sm:rounded-[16px] ${hasText ? "mb-2" : ""}`}
+            style={{ maxHeight: "280px" }}
+          />
+        )}
+
+        {/* Text */}
+        {hasText && (
+          <div className={`text-[13.5px] leading-[1.65] sm:text-[14.5px] sm:leading-[1.7] ${hasImage ? "px-3 pb-2 pt-1 sm:px-3.5" : ""}`}>
+            {message.content.split("\n").map((line, i) => (
+              <span key={i}>
+                {i > 0 && <br />}
+                {line}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Timestamp — only show for real timestamps (not the initial greeting) */}

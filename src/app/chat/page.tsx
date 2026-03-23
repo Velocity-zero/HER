@@ -54,7 +54,7 @@ export default function ChatPage() {
   }, [messages, hydrated]);
 
   // ── Send a message ──
-  const handleSend = useCallback(async (content: string) => {
+  const handleSend = useCallback(async (content: string, image?: string) => {
     if (sendingRef.current) return;
     sendingRef.current = true;
     setError(null);
@@ -63,8 +63,9 @@ export default function ChatPage() {
     const userMessage: Message = {
       id: generateId(),
       role: "user",
-      content,
+      content: content || (image ? "(shared a photo)" : ""),
       timestamp: Date.now(),
+      ...(image ? { image } : {}),
     };
 
     const updatedMessages = [...messages, userMessage];
