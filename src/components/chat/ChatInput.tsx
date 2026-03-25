@@ -18,6 +18,10 @@ const MAX_HEIGHT = 140;
 interface ChatInputProps {
   onSend: (message: string, image?: string) => void;
   disabled?: boolean;
+  /** Externally set prefill text (e.g. from suggestion chips) */
+  prefillText?: string;
+  /** Called after prefill is consumed */
+  onPrefillConsumed?: () => void;
 }
 
 /**
@@ -39,7 +43,7 @@ function readFileAsDataURL(file: File): Promise<string> {
   });
 }
 
-export default function ChatInput({ onSend, disabled = false }: ChatInputProps) {
+export default function ChatInput({ onSend, disabled = false, prefillText, onPrefillConsumed }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -72,6 +76,18 @@ export default function ChatInput({ onSend, disabled = false }: ChatInputProps) 
     // Enable internal scroll only when content exceeds max
     el.style.overflowY = natural > MAX_HEIGHT ? "auto" : "hidden";
   }, []);
+
+  // Consume prefilled text from suggestion chips
+  useEffect(() => {
+    if (prefillText) {
+      setValue(prefillText);
+      onPrefillConsumed?.();
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        recalcHeight();
+      });
+    }
+  }, [prefillText, onPrefillConsumed, recalcHeight]);
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
@@ -204,7 +220,7 @@ export default function ChatInput({ onSend, disabled = false }: ChatInputProps) 
                 requestAnimationFrame(recalcHeight);
               }}
               onKeyDown={handleKeyDown}
-              placeholder="say something..."
+              placeholder="talk to me…"
               disabled={disabled}
               rows={1}
               className="composer-textarea focus-warm min-h-[44px] w-full resize-none overflow-hidden rounded-[22px] border border-her-border/30 bg-her-composer px-4 py-3 text-[14px] leading-[1.6] text-her-text shadow-[inset_0_1px_2px_rgba(180,140,110,0.04)] transition-[border-color,box-shadow] duration-300 ease-out disabled:opacity-25 disabled:cursor-not-allowed sm:min-h-[48px] sm:rounded-[24px] sm:px-5 sm:py-[13px] sm:text-[14.5px] sm:leading-[1.65]"

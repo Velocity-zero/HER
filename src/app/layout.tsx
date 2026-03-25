@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import RegisterSW from "@/components/RegisterSW";
+import AuthProvider from "@/components/AuthProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -45,8 +46,10 @@ export default function RootLayout({
         <meta name="theme-color" content="#F7F2EA" />
       </head>
       <body className={`${inter.variable} font-sans antialiased`}>
-        <RegisterSW />
-        {children}
+        <AuthProvider>
+          <RegisterSW />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

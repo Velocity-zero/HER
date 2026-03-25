@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ChatRequest, ChatResponse } from "@/lib/types";
 import { buildPayload } from "@/lib/conversation";
-import { generateReply } from "@/lib/provider";
+import { generateReply, generateStreamReply } from "@/lib/provider";
 
 /**
  * POST /api/chat
@@ -10,18 +10,50 @@ import { generateReply } from "@/lib/provider";
  * builds the full model payload (system prompt + history),
  * calls the configured AI provider, and returns HER's reply.
  *
- * The client sends:   { messages: Message[], mode?: ConversationMode }
- * The server returns: { message: string } or { message: "", error: string }
+ * Supports two modes:
+ *   - Default: returns { message: string } JSON
+ *   - Streaming (?stream=true): returns a text/plain ReadableStream
  *
  * Provider logic is fully isolated in lib/provider.ts.
- * The frontend never knows which model is being used.
  */
+
+// ── Error classification helper ──
+
+function classifyError(errorMessage: string): { userError: string; status: number } {
+  const isConfigError =
+    errorMessage.includes("not configured") ||
+    errorMessage.includes("Unknown provider");
+
+  const isRateLimit =
+    errorMessage.includes("429") ||
+    errorMessage.includes("quota") ||
+    errorMessage.includes("Too Many Requests");
+
+  if (isConfigError) {
+    return { userError: errorMessage, status: 500 };
+  } else if (isRateLimit) {
+    return {
+      userError: "i need a moment to catch my breath... try again in about 30 seconds 💛",
+      status: 429,
+    };
+  } else {
+    return {
+      userError: "i got a little lost in my thoughts... can you try again?",
+      status: 502,
+    };
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body: ChatRequest = await req.json();
+    const wantsStream = req.nextUrl.searchParams.get("stream") === "true";
 
     // Validate request
     if (!body.messages || !Array.isArray(body.messages)) {
+      if (wantsStream) {
+        return new Response("Invalid request: messages array required", { status: 400 });
+      }
       return NextResponse.json(
         { message: "", error: "Invalid request: messages array required" } as ChatResponse,
         { status: 400 }
@@ -29,22 +61,52 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.messages.length === 0) {
+      if (wantsStream) {
+        return new Response("No messages provided", { status: 400 });
+      }
       return NextResponse.json(
         { message: "", error: "No messages provided" } as ChatResponse,
         { status: 400 }
       );
     }
 
-    // Build the full model payload (system prompt + mode + memory + history)
+    // Build the full model payload
     const payload = buildPayload(body.messages, {
       mode: body.mode || "default",
     });
 
     console.log(
-      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"})`
+      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, stream: ${wantsStream})`
     );
 
-    // Call the AI provider
+    // ── Streaming path ──
+    if (wantsStream) {
+      const stream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          try {
+            for await (const chunk of generateStreamReply(payload)) {
+              controller.enqueue(encoder.encode(chunk));
+            }
+            controller.close();
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : "Stream failed";
+            console.error("[HER API] Stream error:", msg);
+            controller.error(err);
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+          "Transfer-Encoding": "chunked",
+        },
+      });
+    }
+
+    // ── Non-streaming path (backward compatible) ──
     const reply = await generateReply(payload);
 
     return NextResponse.json({
@@ -56,28 +118,12 @@ export async function POST(req: NextRequest) {
 
     console.error("[HER API] Error:", errorMessage);
 
-    // Distinguish between config errors, rate limits, and runtime errors
-    const isConfigError =
-      errorMessage.includes("not configured") ||
-      errorMessage.includes("Unknown provider");
+    const { userError, status } = classifyError(errorMessage);
 
-    const isRateLimit =
-      errorMessage.includes("429") ||
-      errorMessage.includes("quota") ||
-      errorMessage.includes("Too Many Requests");
-
-    let userError: string;
-    let status: number;
-
-    if (isConfigError) {
-      userError = errorMessage;
-      status = 500;
-    } else if (isRateLimit) {
-      userError = "i need a moment to catch my breath... try again in about 30 seconds 💛";
-      status = 429;
-    } else {
-      userError = "i got a little lost in my thoughts... can you try again?";
-      status = 502;
+    // For stream requests, return plain text error
+    const wantsStream = req.nextUrl.searchParams.get("stream") === "true";
+    if (wantsStream) {
+      return new Response(userError, { status });
     }
 
     return NextResponse.json(

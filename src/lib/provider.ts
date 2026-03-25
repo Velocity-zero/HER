@@ -95,28 +95,74 @@ async function geminiProvider(messages: ModelMessage[]): Promise<string> {
   return text;
 }
 
+// ── Gemini Streaming Provider ──────────────────────────────
+
+async function* geminiStreamProvider(
+  messages: ModelMessage[]
+): AsyncGenerator<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || apiKey === "your_gemini_api_key_here") {
+    throw new Error(
+      "GEMINI_API_KEY is not configured. Add it to your .env.local file."
+    );
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+  const systemMessage = messages.find((m) => m.role === "system");
+  const conversationMessages = messages.filter((m) => m.role !== "system");
+
+  const trimmed: ModelMessage[] = [];
+  let foundUser = false;
+  for (const msg of conversationMessages) {
+    if (!foundUser && msg.role === "assistant") continue;
+    foundUser = true;
+    trimmed.push(msg);
+  }
+
+  if (trimmed.length === 0) {
+    throw new Error("No user messages to send");
+  }
+
+  const lastMessage = trimmed[trimmed.length - 1];
+  const history = trimmed.slice(0, -1).map((msg) => ({
+    role: msg.role === "assistant" ? ("model" as const) : ("user" as const),
+    parts: [{ text: msg.content }],
+  }));
+
+  const chat = model.startChat({
+    history,
+    ...(systemMessage
+      ? { systemInstruction: { role: "user" as const, parts: [{ text: systemMessage.content }] } }
+      : {}),
+  });
+
+  const result = await chat.sendMessageStream(lastMessage.content);
+
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) yield text;
+  }
+}
+
 // ── OpenAI Provider (future) ───────────────────────────────
 
 // async function openaiProvider(messages: ModelMessage[]): Promise<string> {
 //   // TODO: Implement OpenAI provider
-//   // Uses messages directly as [{ role, content }]
 //   throw new Error("OpenAI provider not implemented yet");
-// }
-
-// ── Anthropic Provider (future) ────────────────────────────
-
-// async function anthropicProvider(messages: ModelMessage[]): Promise<string> {
-//   // TODO: Implement Anthropic provider
-//   // System prompt goes in a separate `system` field
-//   throw new Error("Anthropic provider not implemented yet");
 // }
 
 // ── Provider Registry ──────────────────────────────────────
 
+type StreamProviderFn = (messages: ModelMessage[]) => AsyncGenerator<string>;
+
 const providers: Record<string, ProviderFn> = {
   gemini: geminiProvider,
-  // openai: openaiProvider,
-  // anthropic: anthropicProvider,
+};
+
+const streamProviders: Record<string, StreamProviderFn> = {
+  gemini: geminiStreamProvider,
 };
 
 // ── Main Entry Point ───────────────────────────────────────
@@ -141,4 +187,23 @@ export async function generateReply(messages: ModelMessage[]): Promise<string> {
   }
 
   return provider(messages);
+}
+
+/**
+ * Generate HER's reply as a stream of text chunks.
+ * Falls back to non-streaming generateReply if no stream provider exists.
+ */
+export async function* generateStreamReply(
+  messages: ModelMessage[]
+): AsyncGenerator<string> {
+  const providerName = process.env.HER_PROVIDER || "gemini";
+  const streamProvider = streamProviders[providerName];
+
+  if (streamProvider) {
+    yield* streamProvider(messages);
+  } else {
+    // Fallback: return the full reply as a single chunk
+    const full = await generateReply(messages);
+    yield full;
+  }
 }

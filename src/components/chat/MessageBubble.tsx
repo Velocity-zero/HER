@@ -27,8 +27,8 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
 
   return (
     <div
-      className={`animate-message-in mb-4 flex flex-col sm:mb-5 ${
-        isUser ? "items-end" : "items-start"
+      className={`mb-4 flex flex-col sm:mb-5 ${
+        isUser ? "animate-message-in items-end" : "animate-assistant-in items-start"
       }`}
       style={{ animationDelay: `${Math.min(index * 30, 150)}ms`, animationFillMode: "backwards" }}
     >

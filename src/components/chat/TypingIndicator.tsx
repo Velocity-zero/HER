@@ -1,7 +1,7 @@
 /**
- * TypingIndicator — Gentle pulsing dots.
- * Like watching someone pause before they speak.
- * Cinematic, unhurried, alive.
+ * TypingIndicator — Breathing presence.
+ * Feels like she's thinking, gathering her thoughts.
+ * A quiet orb and three soft dots — intimate, not mechanical.
  */
 
 export default function TypingIndicator() {
@@ -10,25 +10,31 @@ export default function TypingIndicator() {
       <span className="mb-1 ml-1 text-[9px] font-medium tracking-[0.15em] uppercase text-her-accent/50 sm:text-[10px]">
         her
       </span>
-      <div className="flex items-center gap-[5px] rounded-[20px] rounded-bl-lg bg-her-ai-bubble/80 px-5 py-3.5 shadow-[0_1px_4px_rgba(180,140,110,0.06)]">
-        <span
-          className="h-[4.5px] w-[4.5px] rounded-full bg-her-accent/30"
-          style={{ animation: "softPulse 1.8s ease-in-out infinite" }}
-        />
-        <span
-          className="h-[4.5px] w-[4.5px] rounded-full bg-her-accent/30"
-          style={{
-            animation: "softPulse 1.8s ease-in-out infinite",
-            animationDelay: "0.3s",
-          }}
-        />
-        <span
-          className="h-[4.5px] w-[4.5px] rounded-full bg-her-accent/30"
-          style={{
-            animation: "softPulse 1.8s ease-in-out infinite",
-            animationDelay: "0.6s",
-          }}
-        />
+      <div className="flex items-center gap-2.5 rounded-[20px] rounded-bl-lg bg-her-ai-bubble/80 px-5 py-3.5 shadow-[0_1px_4px_rgba(180,140,110,0.06)]">
+        {/* Breathing presence orb */}
+        <div className="animate-presence-breathe h-[6px] w-[6px] rounded-full bg-her-accent/50" />
+
+        {/* Soft trailing dots */}
+        <div className="flex items-center gap-[4px]">
+          <span
+            className="h-[3.5px] w-[3.5px] rounded-full bg-her-accent/20"
+            style={{ animation: "softPulse 2s ease-in-out infinite" }}
+          />
+          <span
+            className="h-[3.5px] w-[3.5px] rounded-full bg-her-accent/20"
+            style={{
+              animation: "softPulse 2s ease-in-out infinite",
+              animationDelay: "0.4s",
+            }}
+          />
+          <span
+            className="h-[3.5px] w-[3.5px] rounded-full bg-her-accent/20"
+            style={{
+              animation: "softPulse 2s ease-in-out infinite",
+              animationDelay: "0.8s",
+            }}
+          />
+        </div>
       </div>
     </div>
   );

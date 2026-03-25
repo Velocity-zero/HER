@@ -22,10 +22,10 @@ export default function ChatWindow({ children, autoScroll = true }: ChatWindowPr
     if (!autoScroll || !containerRef.current || !bottomRef.current) return;
 
     const el = containerRef.current;
-    // Only auto-scroll if user is near the bottom (within 150px)
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    // Only auto-scroll if user is near the bottom (within 200px)
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     if (isNearBottom) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+      bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [children, autoScroll]);
 
