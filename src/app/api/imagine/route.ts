@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { nvidiaChat, buildImagePromptEnhancerMessages, generateSoftError } from "@/lib/multimodal";
 
 /**
  * POST /api/imagine
  *
- * Generates an image from a text prompt using NVIDIA Stable Diffusion 3 Medium.
- * Returns { image: "data:image/jpeg;base64,..." } on success.
+ * Two-step image generation pipeline:
+ *   1. Mistral Large 3 enriches the user's short prompt into a richer SD3 prompt
+ *   2. Stable Diffusion 3 Medium generates the image from the enhanced prompt
  *
- * The frontend detects image-intent keywords and routes here instead of /api/chat.
+ * Returns { image: "data:image/jpeg;base64,..." } on success.
  */
 
 const NVIDIA_SD3_URL =
@@ -23,15 +25,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const apiKey = process.env.NVIDIA_IMAGE_API_KEY;
-    if (!apiKey || apiKey === "your_image_key_here") {
+    const imageApiKey = process.env.NVIDIA_IMAGE_API_KEY;
+    if (!imageApiKey || imageApiKey === "your_image_key_here") {
       return NextResponse.json(
         { error: "Missing NVIDIA_IMAGE_API_KEY" },
         { status: 500 }
       );
     }
 
-    console.log(`[HER Imagine] Generating image for: "${prompt.slice(0, 80)}…"`);
+    const originalPrompt = prompt.trim();
+    console.log(`[HER Imagine] Original prompt: "${originalPrompt.slice(0, 80)}"`);
+
+    // ── Step 1: Enhance the prompt via Mistral ──
+    let finalPrompt = originalPrompt;
+    try {
+      const enhancerMessages = buildImagePromptEnhancerMessages(originalPrompt);
+      const enhanced = await nvidiaChat(enhancerMessages, {
+        maxTokens: 300,
+        temperature: 0.6,
+        topP: 0.9,
+      });
+      // Sanitize: strip any quotes the model might wrap around the output
+      finalPrompt = enhanced.replace(/^"|"$/g, "").trim() || originalPrompt;
+      console.log(`[HER Imagine] Enhanced prompt: "${finalPrompt.slice(0, 120)}"`);
+    } catch (enhanceErr) {
+      // If enhancement fails, fall back to original prompt gracefully
+      console.warn(
+        "[HER Imagine] Prompt enhancement failed, using original:",
+        enhanceErr instanceof Error ? enhanceErr.message : enhanceErr
+      );
+    }
+
+    // ── Step 2: Generate image with SD3 ──
+    const apiKey = imageApiKey;
+    console.log(`[HER Imagine] Sending to SD3: "${finalPrompt.slice(0, 80)}…"`);
 
     const res = await fetch(NVIDIA_SD3_URL, {
       method: "POST",
@@ -41,7 +68,7 @@ export async function POST(req: NextRequest) {
         Accept: "application/json",
       },
       body: JSON.stringify({
-        prompt: prompt.trim(),
+        prompt: finalPrompt,
         cfg_scale: 5,
         aspect_ratio: "1:1",
         seed: 0,
@@ -55,19 +82,18 @@ export async function POST(req: NextRequest) {
       console.error("[HER Imagine] NVIDIA error:", res.status, errBody);
 
       if (res.status === 429) {
-        return NextResponse.json(
-          {
-            error:
-              "i need a moment before i can paint again… try in about 30 seconds 💛",
-          },
-          { status: 429 }
+        const msg = await generateSoftError(
+          "rate limited while generating an image",
+          "i need a moment before i can paint again… try in about 30 seconds?"
         );
+        return NextResponse.json({ error: msg }, { status: 429 });
       }
 
-      return NextResponse.json(
-        { error: "i couldn't paint that just now… try again in a moment." },
-        { status: 502 }
+      const msg = await generateSoftError(
+        "image generation model returned an error",
+        "i couldn't paint that just now… try again in a moment."
       );
+      return NextResponse.json({ error: msg }, { status: 502 });
     }
 
     const data = await res.json();
@@ -83,10 +109,11 @@ export async function POST(req: NextRequest) {
 
     if (!base64Image) {
       console.error("[HER Imagine] Unexpected response shape:", JSON.stringify(data).slice(0, 200));
-      return NextResponse.json(
-        { error: "i imagined it but couldn't capture it… try again?" },
-        { status: 502 }
+      const emptyMsg = await generateSoftError(
+        "image model returned empty result",
+        "i imagined it but couldn't capture it… try again?"
       );
+      return NextResponse.json({ error: emptyMsg }, { status: 502 });
     }
 
     // Return as data URL
@@ -99,9 +126,10 @@ export async function POST(req: NextRequest) {
     const msg = error instanceof Error ? error.message : "Unknown error";
     console.error("[HER Imagine] Error:", msg);
 
-    return NextResponse.json(
-      { error: "i couldn't paint that just now… try again in a moment." },
-      { status: 502 }
+    const fallbackMsg = await generateSoftError(
+      "unexpected error during image creation",
+      "i couldn't paint that just now… try again in a moment."
     );
+    return NextResponse.json({ error: fallbackMsg }, { status: 502 });
   }
 }

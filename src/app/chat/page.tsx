@@ -202,6 +202,45 @@ export default function ChatPage() {
     setConversations(convos);
   }, [isAuthenticated, user?.id]);
 
+  // ── Emergency-only microcopy fallback pools (used only when /api/microcopy is unreachable) ──
+  const LOCAL_THINKING = ["thinking…", "give me a second…"];
+  const LOCAL_VISION = ["let me look closely…", "taking it in…"];
+  const LOCAL_IMAGE = ["let me paint that for you…", "imagining something beautiful…"];
+  const LOCAL_IMAGE_CAPTIONS = ["here's what i imagined ✨", "i made this for you ✨"];
+  const LOCAL_IMAGE_FAIL = [
+    "i couldn't quite paint that just now… try again in a moment.",
+    "something got in the way of that image… give me another chance?",
+  ];
+  const LOCAL_VISION_FAIL = [
+    "i couldn't read that image just now… try another one.",
+    "i looked closely but couldn't put it into words… try again?",
+  ];
+
+  const pickRandom = (pool: string[]) => pool[Math.floor(Math.random() * pool.length)];
+
+  /** Fetch dynamic microcopy from the API, with instant local fallback */
+  const fetchMicrocopy = async (
+    context: "chat_thinking" | "vision_processing" | "image_generating" | "soft_error",
+    fallbackPool: string[],
+    timeoutMs: number = 500
+  ): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const res = await fetch(`/api/microcopy?context=${context}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text && data.text.length > 1) return data.text;
+      }
+    } catch {
+      // Timeout or network error — use fallback
+    }
+    return pickRandom(fallbackPool);
+  };
+
   // ── Send a message (with streaming response) ──
   const handleSend = useCallback(async (content: string, image?: string) => {
     if (sendingRef.current) return;
@@ -263,6 +302,10 @@ export default function ChatPage() {
     // Create a stable ID for the streaming assistant message
     const herMessageId = generateId();
 
+    // ── Human pacing — brief pause so HER feels present, not instant ──
+    const humanDelay = () =>
+      new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
+
     // ── Vision analysis branch (user uploaded an image) ──
     if (image) {
       const visionPrompt = content || "Describe this image in detail.";
@@ -273,14 +316,30 @@ export default function ChatPage() {
         setIsTyping(false);
         setIsStreaming(true);
 
+        // Fetch dynamic microcopy in parallel (non-blocking)
+        const microcopyPromise = fetchMicrocopy("vision_processing", LOCAL_VISION);
+
         const herPlaceholder: Message = {
           id: herMessageId,
           role: "assistant",
-          content: "let me look closely…",
+          content: pickRandom(LOCAL_VISION),
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, herPlaceholder]);
         setScrollTrigger((n) => n + 1);
+
+        // Upgrade placeholder if dynamic microcopy arrives quickly
+        microcopyPromise.then((text) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === herMessageId && m.content !== text && !m.timestamp
+                ? m // already finalized
+                : m.id === herMessageId && m.content.length < 40
+                ? { ...m, content: text }
+                : m
+            )
+          );
+        });
 
         const res = await fetch("/api/vision", {
           method: "POST",
@@ -290,13 +349,13 @@ export default function ChatPage() {
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ error: "Failed to analyze image" }));
-          throw new Error(errData.error || "i couldn't read that image just now… try another one.");
+          throw new Error(errData.error || pickRandom(LOCAL_VISION_FAIL));
         }
 
         const data = await res.json();
 
         if (!data.message) {
-          throw new Error("i looked closely but couldn't put it into words… try again?");
+          throw new Error(pickRandom(LOCAL_VISION_FAIL));
         }
 
         // ── Vision complete — finalize ──
@@ -342,15 +401,32 @@ export default function ChatPage() {
         setIsTyping(false);
         setIsStreaming(true);
 
+        // Fetch dynamic microcopy in parallel (non-blocking)
+        const microcopyPromise = fetchMicrocopy("image_generating", LOCAL_IMAGE);
+
         const herPlaceholder: Message = {
           id: herMessageId,
           role: "assistant",
-          content: "imagining something beautiful…",
+          content: pickRandom(LOCAL_IMAGE),
           timestamp: Date.now(),
           imageLoading: true,
         };
         setMessages((prev) => [...prev, herPlaceholder]);
         setScrollTrigger((n) => n + 1);
+
+        // Upgrade placeholder if dynamic microcopy arrives during human pacing
+        microcopyPromise.then((text) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === herMessageId && m.imageLoading
+                ? { ...m, content: text }
+                : m
+            )
+          );
+        });
+
+        // ── Human pacing — let the imagining state breathe ──
+        await humanDelay();
 
         const res = await fetch("/api/imagine", {
           method: "POST",
@@ -360,17 +436,17 @@ export default function ChatPage() {
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ error: "Failed to generate image" }));
-          throw new Error(errData.error || "i couldn't paint that just now… try again in a moment.");
+          throw new Error(errData.error || pickRandom(LOCAL_IMAGE_FAIL));
         }
 
         const data = await res.json();
 
         if (!data.image) {
-          throw new Error("i imagined it but couldn't capture it… try again?");
+          throw new Error(pickRandom(LOCAL_IMAGE_FAIL));
         }
 
         // ── Image generated — finalize ──
-        const captionText = `here's what i imagined ✨`;
+        const captionText = pickRandom(LOCAL_IMAGE_CAPTIONS);
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -424,7 +500,10 @@ export default function ChatPage() {
       setIsTyping(false);
       setIsStreaming(true);
 
-      // Insert empty placeholder assistant message
+      // Fetch dynamic microcopy in parallel (non-blocking)
+      const microcopyPromise = fetchMicrocopy("chat_thinking", LOCAL_THINKING);
+
+      // Insert placeholder — starts empty (triggers "thinking…" in MessageBubble)
       const herPlaceholder: Message = {
         id: herMessageId,
         role: "assistant",
@@ -432,6 +511,20 @@ export default function ChatPage() {
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, herPlaceholder]);
+
+      // Upgrade placeholder with dynamic microcopy if it arrives quickly
+      microcopyPromise.then((text) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === herMessageId && m.content === ""
+              ? { ...m, content: text }
+              : m
+          )
+        );
+      });
+
+      // ── Human pacing — let the thinking state breathe ──
+      await humanDelay();
 
       // ── Read the stream chunk by chunk ──
       const reader = res.body.getReader();
@@ -568,17 +661,9 @@ export default function ChatPage() {
 
       {/* Loading overlay for conversation switch */}
       {loadingConvo && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-her-bg/60 backdrop-blur-[1px]">
-          <div className="flex items-center gap-1.5">
-            <div className="animate-soft-pulse h-[5px] w-[5px] rounded-full bg-her-accent/40" />
-            <div
-              className="animate-soft-pulse h-[5px] w-[5px] rounded-full bg-her-accent/40"
-              style={{ animationDelay: "0.3s" }}
-            />
-            <div
-              className="animate-soft-pulse h-[5px] w-[5px] rounded-full bg-her-accent/40"
-              style={{ animationDelay: "0.6s" }}
-            />
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-her-bg/70 backdrop-blur-[2px]">
+          <div className="flex flex-col items-center gap-3">
+            <div className="animate-presence-breathe h-2 w-2 rounded-full bg-her-accent/40" />
           </div>
         </div>
       )}
@@ -607,13 +692,13 @@ export default function ChatPage() {
 
         {/* Error toast */}
         {error && (
-          <div className="animate-fade-in mb-4 flex justify-center px-3 sm:px-0">
+          <div className="animate-fade-in mb-5 flex justify-center px-3 sm:px-0">
             <button
               onClick={dismissError}
-              className="min-h-[44px] rounded-full bg-her-accent/[0.06] px-4 py-2.5 text-[12px] text-her-accent/80 transition-colors duration-300 hover:bg-her-accent/[0.12] sm:px-5 sm:text-[13px]"
+              className="min-h-[44px] rounded-[18px] bg-her-accent/[0.05] px-5 py-3 text-[12px] leading-[1.5] text-her-accent/70 shadow-[0_1px_4px_rgba(180,140,110,0.04)] transition-colors duration-300 hover:bg-her-accent/[0.09] sm:px-6 sm:text-[13px]"
             >
               {error}
-              <span className="ml-2 text-her-accent/30">✕</span>
+              <span className="ml-2.5 text-her-accent/25">✕</span>
             </button>
           </div>
         )}

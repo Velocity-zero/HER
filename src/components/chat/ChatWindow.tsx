@@ -40,7 +40,7 @@ export default function ChatWindow({ children, autoScroll = true, scrollTrigger 
       <div className="flex-1" />
 
       {/* Centered conversation column */}
-      <div className="mx-auto w-full max-w-[640px] px-3 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-8 md:px-6">
+      <div className="mx-auto w-full max-w-[640px] px-3 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pt-6 md:px-6">
         {children}
         <div ref={bottomRef} />
       </div>

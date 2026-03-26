@@ -129,7 +129,7 @@ input[type="text"] {
 @keyframes assistantSlideIn {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.98);
+    transform: translateY(8px) scale(0.99);
   }
   to {
     opacity: 1;
@@ -140,13 +140,13 @@ input[type="text"] {
 @keyframes presenceBreathe {
   0%, 100% {
     transform: scale(1);
-    opacity: 0.4;
+    opacity: 0.45;
     box-shadow: 0 0 0 0 rgba(201, 110, 90, 0);
   }
   50% {
-    transform: scale(1.25);
-    opacity: 0.9;
-    box-shadow: 0 0 12px 3px rgba(201, 110, 90, 0.1);
+    transform: scale(1.2);
+    opacity: 0.85;
+    box-shadow: 0 0 10px 2px rgba(201, 110, 90, 0.08);
   }
 }
 
@@ -243,7 +243,7 @@ input[type="text"] {
 }
 
 .animate-session-fade {
-  animation: sessionFade 0.4s ease-out forwards;
+  animation: sessionFade 0.5s ease-out forwards;
 }
 
 @keyframes streamCursorBlink {
@@ -276,17 +276,35 @@ input[type="text"] {
 .animate-image-shimmer {
   background: linear-gradient(
     90deg,
-    var(--color-her-surface) 25%,
+    transparent 25%,
     var(--color-her-surface-light) 37%,
-    var(--color-her-surface) 63%
+    transparent 63%
   );
   background-size: 200% 100%;
-  animation: imageShimmer 1.8s ease-in-out infinite;
-  border-radius: 14px;
+  animation: imageShimmer 2.2s ease-in-out infinite;
+}
+
+/* ── Generated Image Reveal ─────────────────────────────────── */
+
+@keyframes imageReveal {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+}
+
+.animate-image-reveal {
+  animation: imageReveal 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .animate-breathe {
-  animation: breathe 3.5s ease-in-out infinite;
+  animation: breathe 4s ease-in-out infinite;
 }
 
 .animate-float {
@@ -366,8 +384,9 @@ input[type="text"] {
 }
 
 .composer-textarea::placeholder {
-  color: rgba(111, 98, 90, 0.28);
+  color: rgba(111, 98, 90, 0.32);
   font-weight: 300;
+  letter-spacing: 0.01em;
   transition: opacity 0.4s ease, transform 0.4s ease;
 }
 

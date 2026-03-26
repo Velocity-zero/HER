@@ -9,9 +9,9 @@ export default function LandingPage() {
       </div>
 
       {/* Content — slightly above true-center for natural gravity */}
-      <main className="relative z-10 -mt-10 flex flex-col items-center px-6 text-center sm:-mt-16">
+      <main className="relative z-10 -mt-8 flex flex-col items-center px-6 pb-16 text-center sm:-mt-14 sm:pb-20">
         {/* Breathing presence dot */}
-        <div className="animate-breathe mb-6 h-[6px] w-[6px] rounded-full bg-her-accent/50 sm:mb-8 sm:h-[7px] sm:w-[7px]" />
+        <div className="animate-breathe mb-7 h-[7px] w-[7px] rounded-full bg-her-accent/45 shadow-[0_0_16px_3px_rgba(201,110,90,0.08)] sm:mb-9 sm:h-2 sm:w-2" />
 
         {/* Title — carries the emotional weight of the page */}
         <h1 className="text-gradient text-[2.5rem] font-extralight tracking-[0.18em] sm:text-[3.5rem] md:text-[6rem] md:tracking-[0.22em]">
@@ -21,10 +21,10 @@ export default function LandingPage() {
         {/* CTA — a quiet invitation, tightly coupled to the title */}
         <Link
           href="/chat"
-          className="group mt-6 inline-flex min-h-[44px] items-center gap-2 rounded-full border border-her-accent/20 bg-her-accent/[0.04] px-6 py-2.5 text-[12px] font-light tracking-[0.08em] text-her-accent/75 transition-all duration-500 ease-out hover:border-her-accent/35 hover:bg-her-accent/[0.08] hover:text-her-accent hover:shadow-[0_2px_16px_rgba(201,110,90,0.06)] active:scale-[0.97] active:bg-her-accent/[0.12] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-her-accent/20 focus-visible:ring-offset-2 focus-visible:ring-offset-her-bg sm:mt-8 sm:px-8 sm:py-3 sm:text-[13px]"
+          className="group mt-7 inline-flex min-h-[44px] items-center gap-2.5 rounded-full border border-her-accent/25 bg-her-accent/[0.05] px-7 py-3 text-[12px] font-light tracking-[0.1em] text-her-accent/70 transition-all duration-500 ease-out hover:border-her-accent/40 hover:bg-her-accent/[0.09] hover:text-her-accent hover:shadow-[0_2px_20px_rgba(201,110,90,0.08)] active:scale-[0.97] active:bg-her-accent/[0.12] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-her-accent/20 focus-visible:ring-offset-2 focus-visible:ring-offset-her-bg sm:mt-9 sm:px-9 sm:py-3.5 sm:text-[13px]"
         >
           say something
-          <span className="inline-block text-her-accent/35 transition-all duration-500 ease-out group-hover:translate-x-1 group-hover:text-her-accent/60">
+          <span className="inline-block text-her-accent/40 transition-all duration-500 ease-out group-hover:translate-x-1 group-hover:text-her-accent/65">
             →
           </span>
         </Link>

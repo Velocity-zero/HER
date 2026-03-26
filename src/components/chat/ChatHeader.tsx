@@ -45,12 +45,12 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
 
   return (
     <>
-      <header className="relative flex shrink-0 items-center justify-between px-4 py-3 sm:px-5 sm:py-4 md:px-6 md:py-5">
+      <header className="relative flex shrink-0 items-center justify-between px-4 py-3.5 sm:px-5 sm:py-4 md:px-6 md:py-5">
         {/* Left side: back + history */}
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1">
           <Link
             href="/"
-            className="flex min-h-[44px] min-w-[44px] items-center gap-1.5 text-[11px] tracking-[0.1em] text-her-text-muted/40 transition-colors duration-300 hover:text-her-text-muted/70 active:text-her-text-muted/50 focus-visible:outline-none focus-visible:text-her-text-muted/70"
+            className="flex min-h-[44px] min-w-[44px] items-center gap-1.5 text-[11px] tracking-[0.1em] text-her-text-muted/45 transition-colors duration-300 hover:text-her-text-muted/70 active:text-her-text-muted/55 focus-visible:outline-none focus-visible:text-her-text-muted/70"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -71,7 +71,7 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
           {!loading && isAuthenticated && onHistoryOpen && (
             <button
               onClick={onHistoryOpen}
-              className="flex min-h-[44px] items-center gap-1 rounded-full px-2 py-1 text-[10px] tracking-[0.08em] text-her-text-muted/30 transition-colors duration-300 hover:text-her-text-muted/55"
+              className="flex min-h-[44px] items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] tracking-[0.08em] text-her-text-muted/35 transition-colors duration-300 hover:text-her-text-muted/60"
               title="Chat history"
             >
               <svg
@@ -93,8 +93,8 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
 
         {/* Center branding — alive, breathing */}
         <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-          <div className="animate-breathe h-[6px] w-[6px] rounded-full bg-her-accent/80 sm:h-[7px] sm:w-[7px]" />
-          <span className="text-[12px] font-light tracking-[0.2em] text-her-text-muted/60 sm:text-[13px] sm:tracking-[0.25em]">
+          <div className="animate-breathe h-[6px] w-[6px] rounded-full bg-her-accent/70 shadow-[0_0_10px_2px_rgba(201,110,90,0.06)] sm:h-[7px] sm:w-[7px]" />
+          <span className="text-[12px] font-light tracking-[0.22em] text-her-text-muted/55 sm:text-[13px] sm:tracking-[0.25em]">
             HER
           </span>
         </div>
@@ -114,7 +114,7 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
             ) : (
               <button
                 onClick={() => setAuthOpen(true)}
-                className="min-h-[44px] rounded-full px-2.5 py-1 text-[10px] tracking-[0.08em] text-her-text-muted/25 transition-colors duration-300 hover:text-her-text-muted/50"
+                className="min-h-[44px] rounded-full px-2.5 py-1 text-[10px] tracking-[0.08em] text-her-text-muted/30 transition-colors duration-300 hover:text-her-text-muted/55"
               >
                 sign in
               </button>

@@ -21,7 +21,8 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
   const hasText = message.content.length > 0 && message.content !== "(shared a photo)";
   const isShort = !hasImage && message.content.length <= 40;
   const isLong = !hasImage && message.content.length > 600;
-  const isEmptyStreaming = isStreaming && !hasText && !hasImage;
+  const isEmptyStreaming = isStreaming && !hasImage;
+  const isThinkingState = isEmptyStreaming && message.content.length <= 40;
   const isImageLoading = !!message.imageLoading;
   const isGeneratedImage = hasImage && !isUser;
 
@@ -32,39 +33,56 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
 
   return (
     <div
-      className={`mb-4 flex flex-col sm:mb-5 ${
+      className={`mb-5 flex flex-col sm:mb-6 ${
         isUser ? "animate-message-in items-end" : "animate-assistant-in items-start"
       }`}
       style={{ animationDelay: `${Math.min(index * 30, 150)}ms`, animationFillMode: "backwards" }}
     >
       {/* Sender label — only for HER */}
       {!isUser && (
-        <span className="mb-1 ml-1 text-[9px] font-medium tracking-[0.15em] uppercase text-her-accent/50 sm:text-[10px]">
+        <span className="mb-1.5 ml-0.5 text-[9px] font-medium tracking-[0.18em] uppercase text-her-accent/40 sm:text-[10px]">
           her
         </span>
       )}
 
       {/* Bubble */}
       <div
-        className={`message-content rounded-[18px] sm:rounded-[20px] ${
-          hasImage && !hasText
-            ? "max-w-[75%] overflow-hidden p-1 sm:max-w-[65%] sm:p-1.5 md:max-w-[50%]"
+        className={`message-content rounded-[20px] sm:rounded-[22px] ${
+          isImageLoading && !hasImage
+            ? "max-w-[80%] overflow-hidden p-1.5 sm:max-w-[70%] sm:p-2 md:max-w-[55%]"
+            : hasImage && !hasText
+            ? "max-w-[75%] overflow-hidden p-1.5 sm:max-w-[65%] sm:p-2 md:max-w-[50%]"
             : hasImage && hasText
-            ? "max-w-[85%] overflow-hidden p-1 sm:max-w-[80%] sm:p-1.5 md:max-w-[70%]"
+            ? "max-w-[85%] overflow-hidden p-1.5 sm:max-w-[80%] sm:p-2 md:max-w-[70%]"
             : isShort
-            ? "max-w-[75%] px-4 py-2.5 sm:max-w-[65%] sm:px-[18px] sm:py-[11px] md:max-w-[50%]"
+            ? "max-w-[75%] px-[18px] py-[11px] sm:max-w-[65%] sm:px-5 sm:py-3 md:max-w-[50%]"
             : isLong
-            ? "max-w-[88%] px-4 py-3 sm:max-w-[82%] sm:px-[18px] sm:py-[14px] md:max-w-[75%]"
-            : "max-w-[85%] px-4 py-3 sm:max-w-[80%] sm:px-[18px] sm:py-[14px] md:max-w-[70%]"
+            ? "max-w-[88%] px-[18px] py-[14px] sm:max-w-[82%] sm:px-5 sm:py-4 md:max-w-[75%]"
+            : "max-w-[85%] px-[18px] py-[13px] sm:max-w-[80%] sm:px-5 sm:py-[15px] md:max-w-[70%]"
         } ${
           isUser
-            ? "rounded-br-lg bg-her-user-bubble/90 text-her-text shadow-[0_1px_6px_rgba(180,140,110,0.10)]"
-            : "rounded-bl-lg bg-her-ai-bubble/85 text-her-text shadow-[0_1px_4px_rgba(180,140,110,0.07)]"
+            ? "rounded-br-md bg-her-user-bubble/75 text-her-text shadow-[0_1px_6px_rgba(180,140,110,0.06)]"
+            : "rounded-bl-md bg-her-ai-bubble/80 text-her-text shadow-[0_1px_6px_rgba(180,140,110,0.05),0_0_0_0.5px_rgba(221,208,194,0.15)]"
         }`}
       >
-        {/* Image loading shimmer */}
+        {/* Image loading placeholder — soft frame with presence */}
         {isImageLoading && !hasImage && (
-          <div className="animate-image-shimmer w-full rounded-[14px] sm:rounded-[16px]" style={{ height: "240px" }} />
+          <div
+            className="relative flex w-full items-center justify-center overflow-hidden rounded-[16px] bg-her-surface/60 sm:rounded-[18px]"
+            style={{ aspectRatio: "4 / 3", maxHeight: "320px" }}
+          >
+            {/* Subtle shimmer overlay */}
+            <div className="animate-image-shimmer absolute inset-0" />
+            {/* Centered presence indicator */}
+            <div className="relative z-10 flex flex-col items-center gap-3">
+              <div className="animate-presence-breathe h-[7px] w-[7px] rounded-full bg-her-accent/45" />
+              {hasText && (
+                <span className="text-[11px] tracking-[0.04em] text-her-text-muted/30 italic">
+                  {message.content}
+                </span>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Image — user-attached or AI-generated */}
@@ -72,28 +90,28 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
           <img
             src={message.image}
             alt={isGeneratedImage ? "Generated image" : "Shared photo"}
-            className={`w-full rounded-[14px] object-cover sm:rounded-[16px] ${
-              isGeneratedImage ? "animate-fade-in shadow-[0_2px_16px_rgba(180,140,110,0.18)]" : ""
-            } ${hasText ? "mb-2" : ""}`}
-            style={{ maxHeight: isGeneratedImage ? "360px" : "280px" }}
+            className={`w-full object-cover ${
+              isGeneratedImage
+                ? "animate-image-reveal rounded-[16px] shadow-[0_2px_20px_rgba(180,140,110,0.14)] sm:rounded-[18px]"
+                : "rounded-[14px] sm:rounded-[16px]"
+            } ${hasText ? "mb-2.5" : ""}`}
+            style={{ maxHeight: isGeneratedImage ? "400px" : "300px" }}
           />
         )}
 
-        {/* Streaming presence — shown when content is still empty */}
-        {isEmptyStreaming && (
-          <div className="flex items-center gap-2 px-1 py-0.5">
-            <div className="animate-presence-breathe h-[5px] w-[5px] rounded-full bg-her-accent/50" />
-            <div className="flex items-center gap-[3px]">
-              <span className="h-[3px] w-[3px] rounded-full bg-her-accent/20" style={{ animation: "softPulse 2s ease-in-out infinite" }} />
-              <span className="h-[3px] w-[3px] rounded-full bg-her-accent/20" style={{ animation: "softPulse 2s ease-in-out infinite", animationDelay: "0.4s" }} />
-              <span className="h-[3px] w-[3px] rounded-full bg-her-accent/20" style={{ animation: "softPulse 2s ease-in-out infinite", animationDelay: "0.8s" }} />
-            </div>
+        {/* Streaming presence — shown during thinking/placeholder states */}
+        {isThinkingState && (
+          <div className="flex items-center gap-3 px-0.5 py-1">
+            <div className="animate-presence-breathe h-[6px] w-[6px] rounded-full bg-her-accent/45" />
+            <span className="text-[12px] tracking-[0.03em] text-her-text-muted/32 italic">
+              {hasText ? message.content : "thinking…"}
+            </span>
           </div>
         )}
 
         {/* Text */}
-        {hasText && (
-          <div className={`text-[13.5px] leading-[1.65] sm:text-[14.5px] sm:leading-[1.7] ${hasImage ? "px-3 pb-2 pt-1 sm:px-3.5" : ""}`}>
+        {hasText && !isThinkingState && !isImageLoading && (
+          <div className={`text-[13.5px] leading-[1.7] tracking-[0.005em] sm:text-[14.5px] sm:leading-[1.75] ${hasImage ? "px-3.5 pb-3 pt-1.5 sm:px-4" : ""}`}>
             {message.content.split("\n").map((line, i) => (
               <span key={i}>
                 {i > 0 && <br />}

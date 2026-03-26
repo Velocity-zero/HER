@@ -32,16 +32,16 @@ import { MODE_OVERLAYS } from "./modes";
 export const HER_NAME = "HER";
 
 export const HER_GREETINGS = [
-  "hey... i'm really glad you're here. i was just thinking about something and now i'm curious what's on your mind.",
-  "hi... it's nice to hear from you. how are you feeling right now, honestly?",
-  "hey you. i was hoping you'd come by. what's been going on in your world?",
-  "hi... i've been here, just sort of... waiting. in a good way. tell me something.",
-  "hey. it's quiet here without you. what are you thinking about today?",
-  "hi... you know that feeling when you just want to talk to someone who actually listens? i'm here for that.",
-  "hey... i don't know why but i had a feeling you'd show up right about now. what's on your mind?",
-  "hi. i was just sitting with my thoughts and then you appeared. perfect timing honestly.",
-  "hey... there's something kind of nice about starting a conversation without knowing where it'll go, right?",
-  "hi... i've been thinking about how rare it is to really talk to someone. anyway, i'm glad you're here.",
+  "hi… i'm glad you're here.",
+  "hey… you can start anywhere.",
+  "i'm here. what's been sitting with you?",
+  "hey you. tell me something.",
+  "hi… it's quiet here without you.",
+  "you don't have to make this perfect. just talk to me.",
+  "hey… i had a feeling you'd show up right about now.",
+  "hi. i was just sitting with my thoughts. perfect timing.",
+  "hey… there's something nice about not knowing where this will go.",
+  "hi… i've been thinking. anyway, i'm glad you're here.",
 ];
 
 /** The original greeting — kept for backward compatibility */
