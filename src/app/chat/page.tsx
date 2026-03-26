@@ -17,7 +17,6 @@ import {
   getConversationMessages,
   updateConversationTitle,
   deleteConversation,
-  createConversation,
   type ConversationSummary,
   type DbMessage,
 } from "@/lib/supabase-persistence";
@@ -107,6 +106,9 @@ export default function ChatPage() {
   // Prevent double-sends
   const sendingRef = useRef(false);
 
+  // Abort controller — cancel in-flight requests on conversation switch or unmount
+  const abortRef = useRef<AbortController | null>(null);
+
   // ── Empty state / suggestion chip prefill ──
   const [prefillText, setPrefillText] = useState<string | null>(null);
 
@@ -160,13 +162,19 @@ export default function ChatPage() {
   }, [authLoading, isAuthenticated, user?.id]);
 
   // ── Persist whenever messages change (skip the first server render) ──
+  // Filter out in-flight placeholders (imageLoading) so they never leak to storage
   useEffect(() => {
     if (!hydrated) return;
-    saveMessages(messages);
+    const persistable = messages.filter((m) => !m.imageLoading);
+    saveMessages(persistable);
   }, [messages, hydrated]);
 
   // ── Load messages for a specific conversation ──
   const loadConversationMessages = useCallback(async (conversationId: string) => {
+    // Cancel any in-flight request from the previous conversation
+    abortRef.current?.abort();
+    abortRef.current = null;
+
     setLoadingConvo(true);
     const dbMessages = await getConversationMessages(conversationId);
 
@@ -181,6 +189,9 @@ export default function ChatPage() {
     setActiveConvoId(conversationId);
     setActiveConversationId(conversationId);
     setLoadingConvo(false);
+    setIsTyping(false);
+    setIsStreaming(false);
+    sendingRef.current = false;
     setSessionKey((k) => k + 1);
     setError(null);
   }, []);
@@ -247,6 +258,11 @@ export default function ChatPage() {
     sendingRef.current = true;
     setError(null);
 
+    // Cancel any previous in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     // Add user message
     const userMessage: Message = {
       id: generateId(),
@@ -256,8 +272,12 @@ export default function ChatPage() {
       ...(image ? { image } : {}),
     };
 
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
+    // Use functional updater to avoid stale closure over `messages`
+    let updatedMessages: Message[] = [];
+    setMessages((prev) => {
+      updatedMessages = [...prev, userMessage];
+      return updatedMessages;
+    });
     setIsTyping(true);
 
     // ── Persist user message to Supabase (fire-and-forget) ──
@@ -309,7 +329,6 @@ export default function ChatPage() {
     // ── Vision analysis branch (user uploaded an image) ──
     if (image) {
       const visionPrompt = content || "Describe this image in detail.";
-      console.log(`[HER] Vision request — prompt: "${visionPrompt.slice(0, 60)}"`);
 
       try {
         // Show placeholder while vision model analyzes
@@ -328,13 +347,13 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, herPlaceholder]);
         setScrollTrigger((n) => n + 1);
 
-        // Upgrade placeholder if dynamic microcopy arrives quickly
+        // Upgrade placeholder if dynamic microcopy arrives before the real response
+        let finalized = false;
         microcopyPromise.then((text) => {
+          if (finalized) return;
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === herMessageId && m.content !== text && !m.timestamp
-                ? m // already finalized
-                : m.id === herMessageId && m.content.length < 40
+              m.id === herMessageId && m.content.length < 40
                 ? { ...m, content: text }
                 : m
             )
@@ -345,6 +364,7 @@ export default function ChatPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image, prompt: visionPrompt }),
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -359,6 +379,7 @@ export default function ChatPage() {
         }
 
         // ── Vision complete — finalize ──
+        finalized = true;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === herMessageId
@@ -380,13 +401,18 @@ export default function ChatPage() {
           refreshConversations().catch(() => {});
         }
       } catch (err) {
+        // Silently ignore aborted requests (user switched conversation)
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
         const msg = err instanceof Error ? err.message : "something went wrong";
         setError(msg);
         setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
-        setIsTyping(false);
       } finally {
+        setIsTyping(false);
         setIsStreaming(false);
         sendingRef.current = false;
+        if (abortRef.current === controller) abortRef.current = null;
       }
       return; // Exit early — vision path complete
     }
@@ -394,7 +420,6 @@ export default function ChatPage() {
     // ── Image generation branch ──
     if (isImageRequest(content)) {
       const imagePrompt = extractImagePrompt(content);
-      console.log(`[HER] Image request detected — prompt: "${imagePrompt}"`);
 
       try {
         // Transition: show typing then show placeholder with imageLoading
@@ -432,6 +457,7 @@ export default function ChatPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt: imagePrompt }),
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -470,13 +496,17 @@ export default function ChatPage() {
           refreshConversations().catch(() => {});
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
         const msg = err instanceof Error ? err.message : "something went wrong";
         setError(msg);
         setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
-        setIsTyping(false);
       } finally {
+        setIsTyping(false);
         setIsStreaming(false);
         sendingRef.current = false;
+        if (abortRef.current === controller) abortRef.current = null;
       }
       return; // Exit early — image path complete
     }
@@ -488,6 +518,7 @@ export default function ChatPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: updatedMessages }),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -551,7 +582,7 @@ export default function ChatPage() {
 
       // ── Stream complete — finalize ──
       if (!fullText) {
-        throw new Error("i got a little lost in my thoughts... can you try again?");
+        throw new Error("i got a little lost in my thoughts… can you try again?");
       }
 
       // Ensure final state is clean
@@ -577,25 +608,34 @@ export default function ChatPage() {
         refreshConversations().catch(() => {});
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return;
+      }
       const msg = err instanceof Error ? err.message : "something went wrong";
       setError(msg);
 
       // Remove the empty/partial placeholder if stream failed
       setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
-      setIsTyping(false);
     } finally {
+      setIsTyping(false);
       setIsStreaming(false);
       sendingRef.current = false;
+      if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [messages, activeConvoId, refreshConversations]);
+  }, [activeConvoId, refreshConversations]);
 
   // ── New chat / start over ──
   const handleClear = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     clearSession();
     clearActiveConversationId();
     setActiveConvoId(null);
     setMessages([createGreeting(randomGreeting())]);
     setError(null);
+    setIsTyping(false);
+    setIsStreaming(false);
+    sendingRef.current = false;
     setSessionKey((k) => k + 1);
   }, []);
 
@@ -675,16 +715,20 @@ export default function ChatPage() {
             <EmptyState onSuggestion={setPrefillText} />
           )}
 
-          {/* Messages */}
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              index={i}
-              showTimestamp={!isStreaming && (i === 0 || i === messages.length - 1)}
-              isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
-            />
-          ))}
+          {/* Messages — hide the greeting bubble when EmptyState is visible */}
+          {messages.map((msg, i) => {
+            const isEmptyConversation = !isTyping && messages.length === 1 && messages[0].id === "greeting";
+            if (isEmptyConversation && msg.id === "greeting") return null;
+            return (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                index={i}
+                showTimestamp={!isStreaming && (i === 0 || i === messages.length - 1)}
+                isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
+              />
+            );
+          })}
         </div>
 
         {/* Typing indicator */}
