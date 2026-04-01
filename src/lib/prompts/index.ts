@@ -33,15 +33,15 @@ export const HER_NAME = "HER";
 
 export const HER_GREETINGS = [
   "hi… i'm glad you're here.",
-  "hey… you can start anywhere.",
-  "i'm here. what's been sitting with you?",
+  "hey. what's going on?",
+  "hi. perfect timing, actually.",
   "hey you. tell me something.",
-  "hi… it's quiet here without you.",
-  "you don't have to make this perfect. just talk to me.",
-  "hey… i had a feeling you'd show up right about now.",
-  "hi. i was just sitting with my thoughts. perfect timing.",
-  "hey… there's something nice about not knowing where this will go.",
-  "hi… i've been thinking. anyway, i'm glad you're here.",
+  "hi. i was just thinking about something — anyway, hey.",
+  "hey. start anywhere.",
+  "hi… so what are we getting into today?",
+  "hey. i had a feeling you'd show up right about now.",
+  "hi. what's on your mind?",
+  "hey… alright, i'm here. what've you got?",
 ];
 
 /** The original greeting — kept for backward compatibility */
@@ -60,6 +60,8 @@ interface PromptOptions {
   conversationSummary?: string;
   /** Optional memory notes about the user (future) */
   memoryContext?: string;
+  /** Compact continuity context for anti-repetition */
+  continuityContext?: string;
 }
 
 /**
@@ -96,6 +98,11 @@ export function buildSystemPrompt(options: PromptOptions = {}): string {
     layers.push(
       `EARLIER IN THIS CONVERSATION (summary):\n${options.conversationSummary}`
     );
+  }
+
+  // Inject continuity context (anti-repetition + mode awareness)
+  if (options.continuityContext) {
+    layers.push(options.continuityContext);
   }
 
   // Inject mode overlay (goes last — situational, not core)

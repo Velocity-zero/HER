@@ -303,16 +303,44 @@ RULES:
 
 /**
  * Builds the message payload for HER to enrich a short image generation prompt
- * into a richer, more visual, SD3-optimized generation prompt.
+ * into a richer, more visual, generation-optimized prompt.
  *
  * @param originalPrompt - The user's raw image generation request
  */
+/**
+ * Detects whether a prompt is "short" — meaning the user typed something
+ * minimal like "a cat" or "sunset" that needs heavier creative expansion.
+ * Uses both character count and word count heuristics.
+ */
+export function isShortPrompt(prompt: string): boolean {
+  const trimmed = prompt.trim();
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  return trimmed.length < 40 || wordCount < 6;
+}
+
 export function buildImagePromptEnhancerMessages(
   originalPrompt: string
 ): { role: "system" | "user" | "assistant"; content: string }[] {
-  const system = `You are an expert at writing high-quality image generation prompts for Stable Diffusion 3.
+  const short = isShortPrompt(originalPrompt);
 
-Your job is to take a user's short description and rewrite it into a richer, more visually specific prompt
+  const system = short
+    ? `You are an expert at writing stunning, detailed image generation prompts.
+
+The user has given you a VERY SHORT description — just a few words. Your job is to expand it into
+a vivid, cinematic prompt that will produce a breathtaking image while staying true to what they asked for.
+
+RULES:
+- Preserve the user's subject and intent exactly — do NOT change what they asked for
+- Since the prompt is short, you MUST significantly expand it: add composition, lighting, mood, color palette, texture, atmosphere, background, and cinematic detail
+- Invent a visually compelling setting and mood that naturally fits the subject
+- Add camera language (e.g. "shot from below", "shallow depth of field", "wide-angle lens") when it enhances the image
+- If the subject implies a genre or style, lean into it tastefully
+- Aim for 2–3 rich sentences
+- Do NOT add things contradictory to the user's idea — but DO fill in the visual blanks creatively
+- Return ONLY the final enhanced prompt — no explanations, no preamble, no markdown, no quotes`
+    : `You are an expert at writing high-quality image generation prompts for Stable Diffusion 3.
+
+Your job is to take a user's description and rewrite it into a richer, more visually specific prompt
 that will produce a beautiful, high-quality image.
 
 RULES:
@@ -325,11 +353,74 @@ RULES:
 - Do NOT add things unrelated to the user's original idea
 - Return ONLY the final enhanced prompt — no explanations, no preamble, no markdown, no quotes`;
 
-  const user = `Enhance this image generation prompt while staying true to the user's intent:
+  const user = short
+    ? `The user typed a very short image prompt. Expand it into a vivid, detailed prompt while staying true to their intent:
+
+"${originalPrompt}"
+
+Return only the enhanced prompt.`
+    : `Enhance this image generation prompt while staying true to the user's intent:
 
 "${originalPrompt}"
 
 Return only the enhanced prompt.`;
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+/**
+ * Builds the message payload for enhancing an IMAGE EDIT instruction.
+ * Edit prompts should be more precise and transformation-oriented,
+ * not over-stylized or destructive.
+ *
+ * @param editInstruction - The user's edit instruction (e.g. "make the cat hold a pizza")
+ */
+export function buildEditPromptEnhancerMessages(
+  editInstruction: string
+): { role: "system" | "user" | "assistant"; content: string }[] {
+  const short = isShortPrompt(editInstruction);
+
+  const system = short
+    ? `You are an expert at writing clear, precise image editing instructions.
+
+The user has given you a VERY SHORT edit instruction — just a few words. Your job is to make it
+specific enough for an AI image editing model to execute accurately.
+
+RULES:
+- Preserve the user's original edit intent EXACTLY — do NOT change what they want transformed
+- Since the instruction is short, add necessary spatial/visual specifics: where, how, what style
+- Clarify what part of the image should change and what should stay the same
+- Keep it concise but precise — 1–2 sentences
+- Do NOT add unrelated transformations or stylistic changes the user didn't ask for
+- Return ONLY the enhanced edit instruction — no explanations, no preamble, no markdown, no quotes`
+    : `You are an expert at writing clear, precise image editing instructions.
+
+Your job is to take a user's edit instruction and make it slightly clearer and more specific
+for an AI image editing model, while preserving the exact intent.
+
+RULES:
+- Preserve the user's original edit intent EXACTLY — do NOT change what they want transformed
+- Clarify spatial relationships if ambiguous (e.g. "on the left" → "on the left side of the frame")
+- Keep style and subject references faithful to the original
+- Do NOT add unrelated transformations or stylistic changes the user didn't ask for
+- Do NOT over-embellish — edit instructions should be concise and precise
+- Keep it 1–2 sentences maximum
+- Return ONLY the enhanced edit instruction — no explanations, no preamble, no markdown, no quotes`;
+
+  const user = short
+    ? `The user typed a very short edit instruction. Make it specific enough for an AI editing model while staying true to their intent:
+
+"${editInstruction}"
+
+Return only the enhanced instruction.`
+    : `Enhance this image edit instruction while staying true to the user's intent:
+
+"${editInstruction}"
+
+Return only the enhanced instruction.`;
 
   return [
     { role: "system", content: system },

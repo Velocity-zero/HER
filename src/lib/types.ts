@@ -35,6 +35,8 @@ export interface ConversationConfig {
   memoryContext?: string;
   /** Max conversation messages to include in payload */
   maxMessages?: number;
+  /** Compact continuity context for anti-repetition */
+  continuityContext?: string;
 }
 
 // ── Session ────────────────────────────────────────────────
@@ -51,9 +53,58 @@ export interface ChatSession {
 export interface ChatRequest {
   messages: Message[];
   mode?: ConversationMode;
+  /** Compact continuity context for anti-repetition (computed client-side) */
+  continuityContext?: string;
 }
 
 export interface ChatResponse {
   message: string;
   error?: string;
+}
+
+// ── Image Generation Types ────────────────────────────────
+
+export type ImageStudioMode = "create" | "edit";
+
+export interface ImageGenerationRequest {
+  prompt: string;
+  /** Model ID from the image-models registry */
+  modelId?: string;
+  /** "create" or "edit" */
+  mode?: ImageStudioMode;
+  /** Aspect ratio — mapped to w/h or sent natively depending on model */
+  aspect_ratio?: string;
+  /** Generation steps */
+  steps?: number;
+  /** Classifier-free guidance scale */
+  cfg_scale?: number;
+  /** Negative prompt (only for models that support it) */
+  negative_prompt?: string;
+  /** Random seed */
+  seed?: number;
+  /** Base64 data URL of source image (required for edit mode) */
+  image?: string;
+}
+
+export interface ImageGenerationResponse {
+  image: string;
+  error?: string;
+  /** The enhanced prompt actually sent to the model (absent if unchanged) */
+  revisedPrompt?: string;
+}
+
+/** State for the Image Studio advanced controls */
+export interface ImageStudioState {
+  mode: ImageStudioMode;
+  modelId: string;
+  prompt: string;
+  aspect_ratio: string;
+  steps?: number;
+  cfg_scale?: number;
+  negative_prompt?: string;
+  seed?: number;
+  /** Source image for edit mode (base64 data URL) */
+  sourceImage?: string;
+  /** Whether the advanced panel is expanded */
+  advancedOpen: boolean;
 }

@@ -7,32 +7,36 @@ import { useState, useEffect } from "react";
  *
  * Feels like HER is already here, quietly waiting.
  * Suggestion chips let the user ease into conversation naturally.
+ * All copy is now driven by SurfaceCopyBundle — dynamic per session.
  */
 
-const SUGGESTIONS = [
+const FALLBACK_SUGGESTIONS = [
   "tell me about your day",
   "i can't sleep",
   "make me smile",
-  "stay with me for a while",
+  "help me figure something out",
 ];
 
-const OPENING_LINES = [
-  "it's just us.",
-  "i've been here.",
-  "take your time.",
-  "you found me.",
-];
+const FALLBACK_OPENING_LINE = "it's just us.";
+const FALLBACK_SUBTEXT = "say anything — or nothing at all";
 
 interface EmptyStateProps {
   /** Prefill the composer with a suggestion */
   onSuggestion: (text: string) => void;
+  /** Dynamic suggestion chips from surface copy bundle */
+  suggestions?: string[];
+  /** Dynamic opening line from surface copy bundle */
+  openingLine?: string;
+  /** Dynamic subtext from surface copy bundle */
+  openingSubtext?: string;
 }
 
-export default function EmptyState({ onSuggestion }: EmptyStateProps) {
+export default function EmptyState({ onSuggestion, suggestions, openingLine, openingSubtext }: EmptyStateProps) {
   const [visible, setVisible] = useState(false);
-  const [openingLine] = useState(
-    () => OPENING_LINES[Math.floor(Math.random() * OPENING_LINES.length)]
-  );
+
+  const chips = suggestions && suggestions.length > 0 ? suggestions : FALLBACK_SUGGESTIONS;
+  const headline = openingLine || FALLBACK_OPENING_LINE;
+  const subtext = openingSubtext || FALLBACK_SUBTEXT;
 
   // Stagger appearance for a calm entrance
   useEffect(() => {
@@ -51,17 +55,17 @@ export default function EmptyState({ onSuggestion }: EmptyStateProps) {
 
       {/* Opening line */}
       <p className="mb-1.5 font-light tracking-[0.14em] text-her-text/45 text-[15px] sm:text-[16px]">
-        {openingLine}
+        {headline}
       </p>
 
       {/* Subtext */}
       <p className="mb-10 font-light tracking-[0.04em] text-her-text-muted/28 text-[11px] sm:mb-12 sm:text-[12px]">
-        say anything — or nothing at all
+        {subtext}
       </p>
 
       {/* Suggestion chips */}
       <div className="flex flex-wrap justify-center gap-2 px-8 sm:gap-2.5 sm:px-6">
-        {SUGGESTIONS.map((text, i) => (
+        {chips.map((text, i) => (
           <button
             key={text}
             onClick={() => onSuggestion(text)}

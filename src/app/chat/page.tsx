@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Message } from "@/lib/types";
-import { HER_GREETING, randomGreeting } from "@/lib/prompts";
 import { generateId, loadSession, saveMessages, clearSession } from "@/lib/chat-store";
+import { createSurfaceCopyBundle, GREETING_POOL, type SurfaceCopyBundle } from "@/lib/surface-copy";
+import { buildContinuity, buildContinuityBlock } from "@/lib/continuity";
 import {
   initPersistence,
   getEffectiveUserId,
@@ -28,13 +29,14 @@ import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import HistoryDrawer from "@/components/chat/HistoryDrawer";
 import EmptyState from "@/components/chat/EmptyState";
+import ImageStudio from "@/components/chat/ImageStudio";
+import type { ImageStudioMode } from "@/lib/types";
 
 /**
  * HER opens every conversation with a greeting.
  * Uses a stable timestamp (0) to avoid SSR/client hydration mismatch.
- * Accepts optional content — defaults to HER_GREETING (deterministic for SSR).
  */
-function createGreeting(content: string = HER_GREETING): Message {
+function createGreeting(content: string): Message {
   return {
     id: "greeting",
     role: "assistant",
@@ -89,8 +91,12 @@ function extractImagePrompt(text: string): string {
 export default function ChatPage() {
   const { user, isAuthenticated, loading: authLoading } = useAuth();
 
+  // ── Surface copy bundle (session-stable, regenerates on New Chat) ──
+  const [surfaceCopy, setSurfaceCopy] = useState<SurfaceCopyBundle>(() => createSurfaceCopyBundle());
+
   // ── Core chat state ──
-  const [messages, setMessages] = useState<Message[]>([createGreeting()]);
+  // Initial greeting uses the first pool item for SSR stability — overwritten by hydration useEffect
+  const [messages, setMessages] = useState<Message[]>(() => [createGreeting(GREETING_POOL[0])]);
   const [isTyping, setIsTyping] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,13 +124,26 @@ export default function ChatPage() {
   // Scroll trigger — increments during streaming to keep auto-scroll working
   const [scrollTrigger, setScrollTrigger] = useState(0);
 
+  // ── Image Studio state ──
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [lastRevisedPrompt, setLastRevisedPrompt] = useState<string | null>(null);
+  const [studioError, setStudioError] = useState<string | null>(null);
+
+  // ── Ref for studio prefill (reuse prompt / edit source) ──
+  const [studioPrefill, setStudioPrefill] = useState<{
+    prompt?: string;
+    mode?: "create" | "edit";
+    sourceImage?: string;
+  } | null>(null);
+  const [studioKey, setStudioKey] = useState(0);
+
   // ── Restore from localStorage (client-only, after hydration) ──
   useEffect(() => {
     const saved = loadSession();
     if (saved && saved.messages.length > 0) {
       setMessages(saved.messages);
     } else {
-      setMessages([createGreeting(randomGreeting())]);
+      setMessages([createGreeting(surfaceCopy.greeting)]);
     }
     setHydrated(true);
 
@@ -183,7 +202,7 @@ export default function ChatPage() {
       setMessages(uiMessages);
     } else {
       // Conversation exists but has no messages — show greeting
-      setMessages([createGreeting(randomGreeting())]);
+      setMessages([createGreeting(surfaceCopy.greeting)]);
     }
 
     setActiveConvoId(conversationId);
@@ -191,6 +210,9 @@ export default function ChatPage() {
     setLoadingConvo(false);
     setIsTyping(false);
     setIsStreaming(false);
+    setStudioOpen(false);
+    setLastRevisedPrompt(null);
+    setStudioError(null);
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
     setError(null);
@@ -214,12 +236,12 @@ export default function ChatPage() {
   }, [isAuthenticated, user?.id]);
 
   // ── Emergency-only microcopy fallback pools (used only when /api/microcopy is unreachable) ──
-  const LOCAL_THINKING = ["thinking…", "give me a second…"];
+  const LOCAL_THINKING = [surfaceCopy.thinkingLabel, "give me a second…"];
   const LOCAL_VISION = ["let me look closely…", "taking it in…"];
-  const LOCAL_IMAGE = ["let me paint that for you…", "imagining something beautiful…"];
+  const LOCAL_IMAGE = [surfaceCopy.imageGeneratingLabel, "working on it…"];
   const LOCAL_IMAGE_CAPTIONS = ["here's what i imagined ✨", "i made this for you ✨"];
   const LOCAL_IMAGE_FAIL = [
-    "i couldn't quite paint that just now… try again in a moment.",
+    "i couldn't quite get that just now… try again in a moment.",
     "something got in the way of that image… give me another chance?",
   ];
   const LOCAL_VISION_FAIL = [
@@ -513,11 +535,15 @@ export default function ChatPage() {
 
     // ── Text streaming branch (existing) ──
 
+    // Compute conversation continuity for anti-repetition
+    const continuity = buildContinuity(updatedMessages);
+    const continuityContext = buildContinuityBlock(continuity) ?? undefined;
+
     try {
       const res = await fetch("/api/chat?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updatedMessages }),
+        body: JSON.stringify({ messages: updatedMessages, continuityContext }),
         signal: controller.signal,
       });
 
@@ -624,6 +650,207 @@ export default function ChatPage() {
     }
   }, [activeConvoId, refreshConversations]);
 
+  // ── Friendly error mapper for Image Studio ──
+  function mapStudioError(raw: string): string {
+    const lower = raw.toLowerCase();
+    if (lower.includes("api key") || lower.includes("envkey") || lower.includes("configure") || lower.includes("missing")) {
+      return "she can't paint right now — the image service key is missing.";
+    }
+    if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("gateway") || lower.includes("abort")) {
+      return "she took too long to respond. try again in a moment.";
+    }
+    if (lower.includes("unavailable") || lower.includes("overload") || lower.includes("503") || lower.includes("unsupported model")) {
+      return "she's unavailable right now. try a different model or try again shortly.";
+    }
+    if (lower.includes("image") && (lower.includes("invalid") || lower.includes("read") || lower.includes("decode") || lower.includes("unsupported"))) {
+      return "she couldn't read that image clearly. try a different one.";
+    }
+    return "something interrupted her flow. please try again.";
+  }
+
+  // ── Image Studio generation handler ──
+  const handleStudioGenerate = useCallback(async (request: {
+    prompt: string;
+    modelId: string;
+    mode: ImageStudioMode;
+    aspect_ratio?: string;
+    steps?: number;
+    cfg_scale?: number;
+    negative_prompt?: string;
+    seed?: number;
+    image?: string;
+  }) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setError(null);
+    setStudioError(null);
+    setStudioOpen(false);
+    setLastRevisedPrompt(null);
+
+    // Cancel any previous in-flight request
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Add user message (shows what the user asked for)
+    const userContent = request.mode === "edit"
+      ? `✏️ ${request.prompt}`
+      : `🎨 ${request.prompt}`;
+
+    const userMessage: Message = {
+      id: generateId(),
+      role: "user",
+      content: userContent,
+      timestamp: Date.now(),
+      ...(request.mode === "edit" && request.image ? { image: request.image } : {}),
+    };
+
+    let updatedMessages: Message[] = [];
+    setMessages((prev) => {
+      updatedMessages = [...prev, userMessage];
+      return updatedMessages;
+    });
+    setIsTyping(true);
+
+    // ── Persist user message to Supabase ──
+    const userId = await getEffectiveUserId();
+    let convoId = activeConvoId;
+
+    if (!convoId) {
+      convoId = await getOrCreateConversation(userId, userMessage.content).catch(() => null);
+      if (convoId) {
+        setActiveConvoId(convoId);
+        setActiveConversationId(convoId);
+      }
+    } else {
+      const userMsgCount = updatedMessages.filter((m) => m.role === "user").length;
+      if (userMsgCount === 1) {
+        const raw = userMessage.content.trim();
+        if (raw && raw !== "(shared a photo)") {
+          const title = raw.length > 50 ? raw.slice(0, 50).trimEnd() + "\u2026" : raw;
+          updateConversationTitle(convoId, title).then((ok) => {
+            if (ok) {
+              setConversations((prev) =>
+                prev.map((c) => (c.id === convoId ? { ...c, title } : c))
+              );
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+
+    if (convoId) {
+      saveMessageToSupabase({
+        conversationId: convoId,
+        userId,
+        role: "user",
+        content: userMessage.content,
+        imageUrl: request.mode === "edit" ? request.image : undefined,
+      }).catch(() => {});
+    }
+
+    const herMessageId = generateId();
+
+    try {
+      setIsTyping(false);
+      setIsStreaming(true);
+
+      const microcopyPromise = fetchMicrocopy("image_generating", LOCAL_IMAGE);
+
+      const herPlaceholder: Message = {
+        id: herMessageId,
+        role: "assistant",
+        content: pickRandom(LOCAL_IMAGE),
+        timestamp: Date.now(),
+        imageLoading: true,
+      };
+      setMessages((prev) => [...prev, herPlaceholder]);
+      setScrollTrigger((n) => n + 1);
+
+      microcopyPromise.then((text) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === herMessageId && m.imageLoading ? { ...m, content: text } : m
+          )
+        );
+      });
+
+      // Brief human pacing
+      await new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
+
+      const res = await fetch("/api/imagine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: request.prompt,
+          modelId: request.modelId,
+          mode: request.mode,
+          aspect_ratio: request.aspect_ratio,
+          steps: request.steps,
+          cfg_scale: request.cfg_scale,
+          negative_prompt: request.negative_prompt,
+          seed: request.seed,
+          image: request.image,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: "Failed to generate image" }));
+        throw new Error(errData.error || pickRandom(LOCAL_IMAGE_FAIL));
+      }
+
+      const data = await res.json();
+      if (!data.image) {
+        throw new Error(pickRandom(LOCAL_IMAGE_FAIL));
+      }
+
+      // Store the optimized prompt if the server returned one
+      // (visible next time the user opens the studio — no auto-reopen)
+      if (data.revisedPrompt) {
+        setLastRevisedPrompt(data.revisedPrompt);
+      }
+
+      const captionText = request.mode === "edit"
+        ? pickRandom(["here's the edit ✨", "transformed ✨", "how's this? ✨"])
+        : pickRandom(LOCAL_IMAGE_CAPTIONS);
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === herMessageId
+            ? { ...m, content: captionText, image: data.image, imageLoading: false, timestamp: Date.now() }
+            : m
+        )
+      );
+      setScrollTrigger((n) => n + 1);
+
+      if (convoId) {
+        saveMessageToSupabase({
+          conversationId: convoId,
+          userId,
+          role: "assistant",
+          content: captionText,
+          imageUrl: data.image,
+        }).catch(() => {});
+        touchConversation(convoId).catch(() => {});
+        refreshConversations().catch(() => {});
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      const raw = err instanceof Error ? err.message : "something went wrong";
+      const friendly = mapStudioError(raw);
+      console.warn("[HER Studio] Generation error:", raw);
+      setStudioError(friendly);
+      setStudioOpen(true); // Re-open studio to show the inline error
+      setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
+    } finally {
+      setIsTyping(false);
+      setIsStreaming(false);
+      sendingRef.current = false;
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  }, [activeConvoId, refreshConversations]);
+
   // ── New chat / start over ──
   const handleClear = useCallback(() => {
     abortRef.current?.abort();
@@ -631,10 +858,18 @@ export default function ChatPage() {
     clearSession();
     clearActiveConversationId();
     setActiveConvoId(null);
-    setMessages([createGreeting(randomGreeting())]);
+
+    // Generate fresh surface copy for the new session
+    const freshCopy = createSurfaceCopyBundle();
+    setSurfaceCopy(freshCopy);
+    setMessages([createGreeting(freshCopy.greeting)]);
+
     setError(null);
     setIsTyping(false);
     setIsStreaming(false);
+    setStudioOpen(false);
+    setLastRevisedPrompt(null);
+    setStudioError(null);
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
   }, []);
@@ -667,7 +902,9 @@ export default function ChatPage() {
           clearSession();
           clearActiveConversationId();
           setActiveConvoId(null);
-          setMessages([createGreeting(randomGreeting())]);
+          const freshCopy = createSurfaceCopyBundle();
+          setSurfaceCopy(freshCopy);
+          setMessages([createGreeting(freshCopy.greeting)]);
           setError(null);
         }
       }
@@ -677,6 +914,35 @@ export default function ChatPage() {
   );
 
   const dismissError = useCallback(() => setError(null), []);
+
+  // ── Image action handlers (15J) ──
+
+  const handleImageDownload = useCallback((imageUrl: string) => {
+    try {
+      const link = document.createElement("a");
+      link.href = imageUrl;
+      link.download = `her-image-${Date.now()}.png`;
+      link.click();
+    } catch {
+      console.warn("[HER] Download failed");
+    }
+  }, []);
+
+  const handleCopyPrompt = useCallback((prompt: string) => {
+    navigator.clipboard?.writeText(prompt).catch(() => {});
+  }, []);
+
+  const handleReusePrompt = useCallback((prompt: string) => {
+    setStudioPrefill({ prompt, mode: "create" });
+    setStudioKey((k) => k + 1);
+    setStudioOpen(true);
+  }, []);
+
+  const handleUseAsEditSource = useCallback((imageUrl: string) => {
+    setStudioPrefill({ mode: "edit", sourceImage: imageUrl });
+    setStudioKey((k) => k + 1);
+    setStudioOpen(true);
+  }, []);
 
   return (
     <div className="animate-page-enter flex h-full flex-col overflow-hidden bg-her-bg">
@@ -712,13 +978,42 @@ export default function ChatPage() {
         <div key={sessionKey} className="animate-session-fade">
           {/* Empty state — shown when conversation only has the greeting */}
           {!isTyping && messages.length === 1 && messages[0].id === "greeting" && (
-            <EmptyState onSuggestion={setPrefillText} />
+            <EmptyState
+              onSuggestion={setPrefillText}
+              suggestions={surfaceCopy.starterPrompts}
+              openingLine={surfaceCopy.openingLine}
+              openingSubtext={surfaceCopy.openingSubtext}
+            />
           )}
 
-          {/* Messages — hide the greeting bubble when EmptyState is visible */}
+          {/* Messages */}
           {messages.map((msg, i) => {
-            const isEmptyConversation = !isTyping && messages.length === 1 && messages[0].id === "greeting";
-            if (isEmptyConversation && msg.id === "greeting") return null;
+            const isGeneratedImage = !!msg.image && msg.role === "assistant" && !msg.imageLoading;
+
+            // For generated images, find the preceding user prompt for copy/reuse
+            let msgImageActions: {
+              onDownload?: (imageUrl: string) => void;
+              onCopyPrompt?: () => void;
+              onReusePrompt?: () => void;
+              onUseAsEditSource?: (imageUrl: string) => void;
+            } | undefined;
+            if (isGeneratedImage) {
+              // Walk backwards to find the user message that triggered this generation
+              let userPrompt = "";
+              for (let j = i - 1; j >= 0; j--) {
+                if (messages[j].role === "user") {
+                  userPrompt = messages[j].content.replace(/^[🎨✏️]\s*/, "").trim();
+                  break;
+                }
+              }
+              msgImageActions = {
+                onDownload: handleImageDownload,
+                onCopyPrompt: userPrompt ? () => handleCopyPrompt(userPrompt) : undefined,
+                onReusePrompt: userPrompt ? () => handleReusePrompt(userPrompt) : undefined,
+                onUseAsEditSource: handleUseAsEditSource,
+              };
+            }
+
             return (
               <MessageBubble
                 key={msg.id}
@@ -726,13 +1021,15 @@ export default function ChatPage() {
                 index={i}
                 showTimestamp={!isStreaming && (i === 0 || i === messages.length - 1)}
                 isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
+                imageActions={msgImageActions}
+                thinkingLabel={surfaceCopy.thinkingLabel}
               />
             );
           })}
         </div>
 
         {/* Typing indicator */}
-        {isTyping && <TypingIndicator />}
+        {isTyping && <TypingIndicator label={surfaceCopy.thinkingLabel} />}
 
         {/* Error toast */}
         {error && (
@@ -748,11 +1045,31 @@ export default function ChatPage() {
         )}
       </ChatWindow>
 
+      {/* Image Studio — slides in above the composer */}
+      {studioOpen && (
+        <div className="shrink-0 border-t border-her-border/10 bg-her-bg/95 pb-2 pt-3">
+          <ImageStudio
+            key={studioKey}
+            onGenerate={handleStudioGenerate}
+            disabled={isTyping || isStreaming}
+            onClose={() => setStudioOpen(false)}
+            lastRevisedPrompt={lastRevisedPrompt}
+            studioError={studioError}
+            initialPrefill={studioPrefill}
+            generatingLabel={surfaceCopy.imageGeneratingLabel}
+            editingLabel={surfaceCopy.imageEditingLabel}
+            promptPlaceholder={surfaceCopy.studioPlaceholder}
+          />
+        </div>
+      )}
+
       <ChatInput
         onSend={handleSend}
         disabled={isTyping || isStreaming}
         prefillText={prefillText ?? undefined}
         onPrefillConsumed={() => setPrefillText(null)}
+        onToggleStudio={() => setStudioOpen((v) => !v)}
+        studioOpen={studioOpen}
       />
     </div>
   );

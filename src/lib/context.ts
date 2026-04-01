@@ -94,6 +94,8 @@ export interface ContextOptions {
   recentCount?: number;
   /** Externally provided memory context */
   memoryContext?: string;
+  /** Compact continuity context for anti-repetition */
+  continuityContext?: string;
 }
 
 /**
@@ -132,6 +134,7 @@ export function buildContext(
     mode: options.mode,
     conversationSummary: summary ?? undefined,
     memoryContext: memory ?? undefined,
+    continuityContext: options.continuityContext,
   });
 
   const systemMessage: ModelMessage = {

@@ -22,6 +22,10 @@ interface ChatInputProps {
   prefillText?: string;
   /** Called after prefill is consumed */
   onPrefillConsumed?: () => void;
+  /** Toggle the Image Studio panel */
+  onToggleStudio?: () => void;
+  /** Whether the Image Studio is currently open */
+  studioOpen?: boolean;
 }
 
 /**
@@ -43,7 +47,7 @@ function readFileAsDataURL(file: File): Promise<string> {
   });
 }
 
-export default function ChatInput({ onSend, disabled = false, prefillText, onPrefillConsumed }: ChatInputProps) {
+export default function ChatInput({ onSend, disabled = false, prefillText, onPrefillConsumed, onToggleStudio, studioOpen }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -198,6 +202,25 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
               <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
             </svg>
           </button>
+
+          {/* Image Studio toggle */}
+          {onToggleStudio && (
+            <button
+              type="button"
+              onClick={onToggleStudio}
+              disabled={disabled}
+              aria-label={studioOpen ? "Close image studio" : "Open image studio"}
+              className={`mb-0.5 flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full transition-all duration-300 active:scale-[0.92] disabled:opacity-25 disabled:cursor-not-allowed sm:h-[44px] sm:w-[44px] ${
+                studioOpen
+                  ? "bg-her-accent/[0.08] text-her-accent/50 hover:bg-her-accent/[0.12]"
+                  : "text-her-text-muted/28 hover:bg-her-surface/60 hover:text-her-text-muted/50"
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-[16px] w-[16px] sm:h-[17px] sm:w-[17px]">
+                <path fillRule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909-4.22-4.22a.75.75 0 00-1.06 0L2.5 11.06zm6.5-3.81a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
 
           {/* Hidden file input */}
           <input

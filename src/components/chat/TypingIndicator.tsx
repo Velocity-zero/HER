@@ -4,7 +4,12 @@
  * A quiet orb and three soft dots — intimate, not mechanical.
  */
 
-export default function TypingIndicator() {
+interface TypingIndicatorProps {
+  /** Dynamic label from surface copy bundle (e.g. "thinking…", "working through it…") */
+  label?: string;
+}
+
+export default function TypingIndicator({ label }: TypingIndicatorProps) {
   return (
     <div className="animate-fade-in mb-5 flex flex-col items-start sm:mb-6">
       <span className="mb-1.5 ml-0.5 text-[9px] font-medium tracking-[0.18em] uppercase text-her-accent/40 sm:text-[10px]">

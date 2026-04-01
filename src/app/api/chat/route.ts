@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
     // Build the full model payload
     const payload = buildPayload(body.messages, {
       mode: body.mode || "default",
+      continuityContext: body.continuityContext,
     });
 
     console.log(

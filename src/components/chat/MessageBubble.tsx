@@ -1,4 +1,5 @@
 import { Message } from "@/lib/types";
+import { useState } from "react";
 
 /**
  * MessageBubble — A single message in the conversation.
@@ -13,9 +14,18 @@ interface MessageBubbleProps {
   index?: number;
   /** True when this message is actively being streamed */
   isStreaming?: boolean;
+  /** Image action callbacks — only for messages with generated images */
+  imageActions?: {
+    onDownload?: (imageUrl: string) => void;
+    onCopyPrompt?: () => void;
+    onReusePrompt?: () => void;
+    onUseAsEditSource?: (imageUrl: string) => void;
+  };
+  /** Dynamic thinking state label from surface copy bundle */
+  thinkingLabel?: string;
 }
 
-export default function MessageBubble({ message, showTimestamp = false, index = 0, isStreaming = false }: MessageBubbleProps) {
+export default function MessageBubble({ message, showTimestamp = false, index = 0, isStreaming = false, imageActions, thinkingLabel }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const hasImage = !!message.image;
   const hasText = message.content.length > 0 && message.content !== "(shared a photo)";
@@ -25,6 +35,9 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
   const isThinkingState = isEmptyStreaming && message.content.length <= 40;
   const isImageLoading = !!message.imageLoading;
   const isGeneratedImage = hasImage && !isUser;
+  const showActions = isGeneratedImage && !isImageLoading && imageActions;
+
+  const [copied, setCopied] = useState(false);
 
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "numeric",
@@ -104,7 +117,7 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
           <div className="flex items-center gap-3 px-0.5 py-1">
             <div className="animate-presence-breathe h-[6px] w-[6px] rounded-full bg-her-accent/45" />
             <span className="text-[12px] tracking-[0.03em] text-her-text-muted/32 italic">
-              {hasText ? message.content : "thinking…"}
+              {hasText ? message.content : (thinkingLabel || "thinking…")}
             </span>
           </div>
         )}
@@ -119,6 +132,52 @@ export default function MessageBubble({ message, showTimestamp = false, index = 
               </span>
             ))}
             {isStreaming && <span className="animate-stream-cursor" />}
+          </div>
+        )}
+
+        {/* Image actions — download, copy prompt, reuse, edit source */}
+        {showActions && (
+          <div className="flex flex-wrap gap-1 px-3 pb-2.5 pt-1">
+            {/* Download */}
+            {imageActions.onDownload && (
+              <button
+                onClick={() => imageActions.onDownload!(message.image!)}
+                className="rounded-full border border-her-border/12 bg-her-bg/50 px-2.5 py-1 text-[10px] text-her-text-muted/35 transition-all duration-150 hover:border-her-accent/15 hover:text-her-text-muted/55"
+              >
+                ↓ save
+              </button>
+            )}
+            {/* Copy prompt */}
+            {imageActions.onCopyPrompt && (
+              <button
+                onClick={() => {
+                  imageActions.onCopyPrompt!();
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="rounded-full border border-her-border/12 bg-her-bg/50 px-2.5 py-1 text-[10px] text-her-text-muted/35 transition-all duration-150 hover:border-her-accent/15 hover:text-her-text-muted/55"
+              >
+                {copied ? "✓ copied" : "copy prompt"}
+              </button>
+            )}
+            {/* Reuse prompt */}
+            {imageActions.onReusePrompt && (
+              <button
+                onClick={() => imageActions.onReusePrompt!()}
+                className="rounded-full border border-her-border/12 bg-her-bg/50 px-2.5 py-1 text-[10px] text-her-text-muted/35 transition-all duration-150 hover:border-her-accent/15 hover:text-her-text-muted/55"
+              >
+                reuse
+              </button>
+            )}
+            {/* Use as edit source */}
+            {imageActions.onUseAsEditSource && (
+              <button
+                onClick={() => imageActions.onUseAsEditSource!(message.image!)}
+                className="rounded-full border border-her-border/12 bg-her-bg/50 px-2.5 py-1 text-[10px] text-her-text-muted/35 transition-all duration-150 hover:border-her-accent/15 hover:text-her-text-muted/55"
+              >
+                edit this
+              </button>
+            )}
           </div>
         )}
       </div>
