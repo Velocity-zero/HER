@@ -653,19 +653,30 @@ export default function ChatPage() {
   // ── Friendly error mapper for Image Studio ──
   function mapStudioError(raw: string): string {
     const lower = raw.toLowerCase();
-    if (lower.includes("api key") || lower.includes("envkey") || lower.includes("configure") || lower.includes("missing")) {
-      return "she can't paint right now — the image service key is missing.";
+    if (lower.includes("api key") || lower.includes("envkey") || lower.includes("configure") || lower.includes("missing") || lower.includes("unauthorized")) {
+      return "she can't create right now — the image service key isn't working.";
+    }
+    if (lower.includes("rate limit") || lower.includes("429") || lower.includes("too many")) {
+      return "too many requests — give it about 30 seconds and try again.";
     }
     if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("gateway") || lower.includes("abort")) {
-      return "she took too long to respond. try again in a moment.";
+      return "that took too long. try again in a moment.";
     }
-    if (lower.includes("unavailable") || lower.includes("overload") || lower.includes("503") || lower.includes("unsupported model")) {
-      return "she's unavailable right now. try a different model or try again shortly.";
+    if (lower.includes("(422)") || lower.includes("rejected the request") || lower.includes("payload")) {
+      return "those settings didn't quite work. try adjusting the prompt or switching to Recommended.";
+    }
+    if (lower.includes("unavailable") || lower.includes("overload") || lower.includes("503") || lower.includes("502") || lower.includes("unsupported model") || lower.includes("not be supported")) {
+      return "the image service is taking a break. try once more, or switch to Recommended for the most reliable results.";
+    }
+    if (lower.includes("unexpected response")) {
+      return "the image came back in a format she didn't recognize. try once more, or Recommended tends to be the most reliable.";
     }
     if (lower.includes("image") && (lower.includes("invalid") || lower.includes("read") || lower.includes("decode") || lower.includes("unsupported"))) {
       return "she couldn't read that image clearly. try a different one.";
     }
-    return "something interrupted her flow. please try again.";
+    // Fallback — include a hint of the real error for debugging
+    console.warn("[HER Studio] Unmapped error:", raw);
+    return "something went wrong. try once more, or switch to Recommended for the most reliable results.";
   }
 
   // ── Image Studio generation handler ──
@@ -839,7 +850,7 @@ export default function ChatPage() {
       if (err instanceof DOMException && err.name === "AbortError") return;
       const raw = err instanceof Error ? err.message : "something went wrong";
       const friendly = mapStudioError(raw);
-      console.warn("[HER Studio] Generation error:", raw);
+      console.warn(`[HER Studio] Generation error (model: ${request.modelId}, mode: ${request.mode}):`, raw);
       setStudioError(friendly);
       setStudioOpen(true); // Re-open studio to show the inline error
       setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
@@ -934,12 +945,14 @@ export default function ChatPage() {
 
   const handleReusePrompt = useCallback((prompt: string) => {
     setStudioPrefill({ prompt, mode: "create" });
+    setStudioError(null);
     setStudioKey((k) => k + 1);
     setStudioOpen(true);
   }, []);
 
   const handleUseAsEditSource = useCallback((imageUrl: string) => {
     setStudioPrefill({ mode: "edit", sourceImage: imageUrl });
+    setStudioError(null);
     setStudioKey((k) => k + 1);
     setStudioOpen(true);
   }, []);
@@ -1059,6 +1072,8 @@ export default function ChatPage() {
             generatingLabel={surfaceCopy.imageGeneratingLabel}
             editingLabel={surfaceCopy.imageEditingLabel}
             promptPlaceholder={surfaceCopy.studioPlaceholder}
+            onRetry={() => setStudioError(null)}
+            onSwitchRecommended={() => setStudioError(null)}
           />
         </div>
       )}

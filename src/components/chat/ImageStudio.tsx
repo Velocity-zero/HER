@@ -8,6 +8,7 @@ import {
   DEFAULT_CREATE_MODEL_ID,
   DEFAULT_EDIT_MODEL_ID,
   type ImageModelMode,
+  type ModelQuality,
 } from "@/lib/image-models";
 import type { ImageStudioMode } from "@/lib/types";
 
@@ -52,6 +53,10 @@ interface ImageStudioProps {
   editingLabel?: string;
   /** Dynamic placeholder for the prompt textarea */
   promptPlaceholder?: string;
+  /** Called when user clicks 'try again' after a failure */
+  onRetry?: () => void;
+  /** Called when user clicks 'use recommended' after a failure on a non-default model */
+  onSwitchRecommended?: () => void;
 }
 
 // ── Helpers ────────────────────────────────────────────────
@@ -114,9 +119,34 @@ function ChevronIcon({ open }: { open: boolean }) {
   );
 }
 
+// ── Trust Layer Helpers ─────────────────────────────────────
+
+/** Map internal quality tag → user-facing trust label */
+const QUALITY_LABELS: Record<ModelQuality, string> = {
+  stable: "Recommended",
+  fast: "Fast",
+  experimental: "Creative",
+  specialized: "Edit Focused",
+};
+
+/** Per-model soft guidance copy (keyed by model ID for precision) */
+const MODEL_GUIDANCE: Record<string, string> = {
+  "stable-diffusion-3-medium": "Most reliable for everyday creations.",
+  "flux-2-klein-4b": "Fast and lightweight — great for quick ideas.",
+  "flux-1-dev": "More stylized control, but can take a little longer.",
+  "flux-1-kontext-dev": "Built for image edits and transformations.",
+};
+
+/** Per-model soft retry hint (only shown for less-reliable models) */
+const MODEL_HINT: Record<string, string> = {
+  "flux-2-klein-4b": "If a generation stalls, try once more or switch to Recommended.",
+  "flux-1-dev": "Best when you want to experiment — results can vary.",
+  "flux-1-kontext-dev": "Best with clear, full-size images. Try again if it doesn't respond the first time.",
+};
+
 // ── Component ──────────────────────────────────────────────
 
-export default function ImageStudio({ onGenerate, disabled = false, onClose, lastRevisedPrompt, studioError, initialPrefill, generatingLabel, editingLabel, promptPlaceholder }: ImageStudioProps) {
+export default function ImageStudio({ onGenerate, disabled = false, onClose, lastRevisedPrompt, studioError, initialPrefill, generatingLabel, editingLabel, promptPlaceholder, onRetry, onSwitchRecommended }: ImageStudioProps) {
   // ── State ──
   const [mode, setMode] = useState<ImageModelMode>(initialPrefill?.mode || "create");
   const [revisedOpen, setRevisedOpen] = useState(false);
@@ -187,17 +217,35 @@ export default function ImageStudio({ onGenerate, disabled = false, onClose, las
     setSeed(undefined);
   }, []);
 
-  // When switching model within same mode, reset advanced to that model's defaults
+  // When switching model within same mode, normalize advanced controls to new model's constraints
   const handleModelChange = useCallback((newId: string) => {
+    const newModel = getImageModel(newId);
     setModelId(newId);
-    setSteps(undefined);
-    setCfgScale(undefined);
-    setNegativePrompt("");
-    setSeed(undefined);
+
+    // Clamp steps into new model's valid range (or reset if unsupported)
+    if (newModel?.capabilities.steps && newModel.ranges.steps) {
+      setSteps((prev) => {
+        if (prev === undefined) return undefined; // user hadn't customized → keep default
+        return Math.max(newModel.ranges.steps!.min, Math.min(newModel.ranges.steps!.max, prev));
+      });
+    } else {
+      setSteps(undefined);
+    }
+
+    // Clear cfg_scale if new model doesn't support it, otherwise keep user's value
+    if (!newModel?.capabilities.cfg_scale) {
+      setCfgScale(undefined);
+    }
+
+    // Clear negative prompt if unsupported
+    if (!newModel?.capabilities.negative_prompt) {
+      setNegativePrompt("");
+    }
+
+    // Keep seed as-is (all current models support it)
     // Reset aspect ratio to model default
-    const m = getImageModel(newId);
-    if (m) {
-      setAspectRatio(m.defaults.aspect_ratio as string || "1:1");
+    if (newModel) {
+      setAspectRatio(newModel.defaults.aspect_ratio as string || "1:1");
     }
   }, []);
 
@@ -443,23 +491,47 @@ export default function ImageStudio({ onGenerate, disabled = false, onClose, las
         {/* Model selector */}
         <div className="mb-3">
           <div className="flex flex-wrap gap-1.5">
-            {(mode === "create" ? createModels : editModels).map((m) => (
-              <button
-                key={m.id}
-                onClick={() => handleModelChange(m.id)}
-                className={`rounded-full px-3 py-1.5 text-[10.5px] tracking-[0.02em] transition-all duration-200 sm:text-[11px] ${
-                  modelId === m.id
-                    ? "border border-her-accent/25 bg-her-accent/[0.07] text-her-accent shadow-[0_1px_3px_rgba(201,110,90,0.06)]"
-                    : "border border-her-border/15 bg-her-bg/40 text-her-text-muted/40 hover:border-her-accent/15 hover:text-her-text-muted/55"
-                }`}
-              >
-                {m.label}
-                <span className={`ml-1 ${modelId === m.id ? "text-her-accent/50" : "text-her-text-muted/25"}`}>
-                  · {m.description}
-                </span>
-              </button>
-            ))}
+            {(mode === "create" ? createModels : editModels).map((m) => {
+              const badge = QUALITY_LABELS[m.quality] || "";
+              const isDefault = m.id === DEFAULT_CREATE_MODEL_ID;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => handleModelChange(m.id)}
+                  className={`rounded-full px-3 py-1.5 text-[10.5px] tracking-[0.02em] transition-all duration-200 sm:text-[11px] ${
+                    modelId === m.id
+                      ? "border border-her-accent/25 bg-her-accent/[0.07] text-her-accent shadow-[0_1px_3px_rgba(201,110,90,0.06)]"
+                      : "border border-her-border/15 bg-her-bg/40 text-her-text-muted/40 hover:border-her-accent/15 hover:text-her-text-muted/55"
+                  }`}
+                >
+                  {m.label}
+                  {isDefault && mode === "create" && (
+                    <span className={`ml-1 text-[9px] tracking-[0.03em] ${
+                      modelId === m.id ? "text-her-accent/45" : "text-her-text-muted/25"
+                    }`}>
+                      ✦
+                    </span>
+                  )}
+                  <span className={`ml-1 ${modelId === m.id ? "text-her-accent/45" : "text-her-text-muted/25"}`}>
+                    · {badge}
+                  </span>
+                </button>
+              );
+            })}
           </div>
+          {/* Per-model guidance copy */}
+          {model && (
+            <div className="mt-1.5 min-h-[16px]">
+              <p className="text-[10px] leading-[1.5] text-her-text-muted/30 italic">
+                {MODEL_GUIDANCE[model.id] || model.description}
+              </p>
+              {MODEL_HINT[model.id] && (
+                <p className="mt-0.5 text-[9.5px] leading-[1.4] text-her-text-muted/22 italic">
+                  {MODEL_HINT[model.id]}
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Aspect ratio selector (always visible) */}
@@ -508,6 +580,10 @@ export default function ImageStudio({ onGenerate, disabled = false, onClose, las
         {/* Advanced controls — capability-aware */}
         {advancedOpen && model && (
           <div className="animate-fade-in mb-3 space-y-3 rounded-[12px] border border-her-border/10 bg-her-bg/30 px-3.5 py-3">
+            {/* Capability-aware hint */}
+            <p className="text-[9.5px] leading-[1.4] text-her-text-muted/22 italic -mb-1">
+              Controls adjust to what each model supports.
+            </p>
 
             {/* Steps */}
             {model.capabilities.steps && model.ranges.steps && (
@@ -593,12 +669,36 @@ export default function ImageStudio({ onGenerate, disabled = false, onClose, las
           </div>
         )}
 
-        {/* Studio error — friendly inline message */}
+        {/* Studio error — friendly inline message + recovery actions */}
         {studioError && (
           <div className="animate-fade-in mb-3 rounded-[12px] border border-her-accent/10 bg-her-accent/[0.03] px-3.5 py-2.5">
             <p className="text-[11.5px] leading-[1.5] text-her-accent/60 italic sm:text-[12px]">
               {studioError}
             </p>
+            {/* Recovery actions */}
+            <div className="mt-2 flex items-center gap-3">
+              {onRetry && (
+                <button
+                  onClick={() => { onRetry(); handleSubmit(); }}
+                  disabled={disabled || !canSubmit}
+                  className="text-[10.5px] font-medium tracking-[0.02em] text-her-accent/50 transition-colors duration-200 hover:text-her-accent/70 disabled:opacity-30 disabled:cursor-not-allowed sm:text-[11px]"
+                >
+                  try again
+                </button>
+              )}
+              {onSwitchRecommended && mode === "create" && modelId !== DEFAULT_CREATE_MODEL_ID && (
+                <button
+                  onClick={() => {
+                    handleModelChange(DEFAULT_CREATE_MODEL_ID);
+                    onSwitchRecommended();
+                  }}
+                  disabled={disabled}
+                  className="text-[10.5px] tracking-[0.02em] text-her-text-muted/35 transition-colors duration-200 hover:text-her-text-muted/50 disabled:opacity-30 disabled:cursor-not-allowed sm:text-[11px]"
+                >
+                  use Recommended instead
+                </button>
+              )}
+            </div>
           </div>
         )}
 

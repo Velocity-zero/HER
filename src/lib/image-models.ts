@@ -35,10 +35,15 @@ export interface Range {
   max: number;
 }
 
+/** Evidence-based stability rating from stress-test harness results */
+export type ModelQuality = "stable" | "experimental" | "fast" | "specialized";
+
 export interface ImageModelDef {
   id: string;
   label: string;
   description: string;
+  /** Evidence-based stability hint (from harness 16O.3A results) */
+  quality: ModelQuality;
   mode: ImageModelMode;
   endpoint: string;
   /**
@@ -78,6 +83,7 @@ export const IMAGE_MODELS: ImageModelDef[] = [
     id: "flux-2-klein-4b",
     label: "Flux.2 Klein 4B",
     description: "Fast & crisp",
+    quality: "fast",
     mode: "create",
     endpoint: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b",
     envKey: "NVIDIA_FLUX2_KLEIN_API_KEY",
@@ -98,14 +104,15 @@ export const IMAGE_MODELS: ImageModelDef[] = [
       mode_field: false,
     },
     ranges: {
-      steps: { min: 1, max: 12 },
+      steps: { min: 1, max: 4 },
       seed: { min: 0, max: 2147483647 },
     },
   },
   {
     id: "flux-1-dev",
     label: "Flux.1 Dev",
-    description: "Highest control",
+    description: "Highest control · can be slower",
+    quality: "experimental",
     mode: "create",
     endpoint: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev",
     envKey: "NVIDIA_FLUX1_DEV_API_KEY",
@@ -137,6 +144,7 @@ export const IMAGE_MODELS: ImageModelDef[] = [
     id: "stable-diffusion-3-medium",
     label: "Stable Diffusion 3",
     description: "Flexible classic",
+    quality: "stable",
     mode: "create",
     endpoint: "https://ai.api.nvidia.com/v1/genai/stabilityai/stable-diffusion-3-medium",
     envKey: "NVIDIA_SD3_MEDIUM_API_KEY",
@@ -170,6 +178,7 @@ export const IMAGE_MODELS: ImageModelDef[] = [
     id: "flux-1-kontext-dev",
     label: "Flux.1 Kontext",
     description: "Image-aware transformation",
+    quality: "specialized",
     mode: "edit",
     endpoint: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-kontext-dev",
     envKey: "NVIDIA_FLUX1_KONTEXT_API_KEY",
@@ -298,23 +307,29 @@ export function buildImagePayload(
     );
   }
 
-  // Negative prompt
+  // Negative prompt — only include if non-empty
   if (model.capabilities.negative_prompt) {
-    payload.negative_prompt = typeof params.negative_prompt === "string"
-      ? params.negative_prompt
-      : (model.defaults.negative_prompt as string) ?? "";
+    const neg = typeof params.negative_prompt === "string"
+      ? params.negative_prompt.trim()
+      : ((model.defaults.negative_prompt as string) ?? "").trim();
+    if (neg.length > 0) {
+      payload.negative_prompt = neg;
+    }
   }
 
-  // Seed
+  // Seed — only include if model supports it and value is valid
   if (model.capabilities.seed && model.ranges.seed) {
-    payload.seed = clampToRange(
+    const seedVal = clampToRange(
       params.seed,
       model.ranges.seed,
       model.defaults.seed as number
     );
+    if (typeof seedVal === "number" && Number.isFinite(seedVal)) {
+      payload.seed = seedVal;
+    }
   }
 
-  // Image input (edit mode)
+  // Image input (edit mode) — already normalized by caller
   if (model.capabilities.image_input && params.image) {
     payload.image = params.image;
   }
