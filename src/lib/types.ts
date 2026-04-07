@@ -37,6 +37,8 @@ export interface ConversationConfig {
   maxMessages?: number;
   /** Compact continuity context for anti-repetition */
   continuityContext?: string;
+  /** Rapport level (0–4) for progressive bonding */
+  rapportLevel?: number;
 }
 
 // ── Session ────────────────────────────────────────────────
@@ -53,6 +55,8 @@ export interface ChatSession {
 export interface ChatRequest {
   messages: Message[];
   mode?: ConversationMode;
+  /** Rapport level (0–4) for progressive bonding */
+  rapportLevel?: number;
   /** Compact continuity context for anti-repetition (computed client-side) */
   continuityContext?: string;
 }

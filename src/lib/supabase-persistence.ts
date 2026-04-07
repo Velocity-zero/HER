@@ -367,6 +367,61 @@ export async function deleteConversation(
 // ── Initialization ─────────────────────────────────────────
 
 /**
+ * Rapport stats — used to determine relationship depth.
+ */
+export interface UserRapportStats {
+  /** Total number of past conversations */
+  totalConversations: number;
+  /** Total number of user messages across all conversations */
+  totalUserMessages: number;
+}
+
+/**
+ * Fetch high-level stats about a user's history.
+ * Used to compute rapport level for progressive bonding.
+ * Returns zeros on failure (safe default = new user).
+ */
+export async function getUserRapportStats(
+  userId: string
+): Promise<UserRapportStats> {
+  const client = getSupabaseClient();
+  if (!client) return { totalConversations: 0, totalUserMessages: 0 };
+
+  try {
+    // Count conversations
+    const { count: convoCount, error: convoErr } = await client
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId);
+
+    if (convoErr) {
+      console.warn("[HER DB] Rapport stats (convos) failed:", convoErr.message);
+      return { totalConversations: 0, totalUserMessages: 0 };
+    }
+
+    // Count user messages across all their conversations
+    const { count: msgCount, error: msgErr } = await client
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("role", "user");
+
+    if (msgErr) {
+      console.warn("[HER DB] Rapport stats (msgs) failed:", msgErr.message);
+      return { totalConversations: convoCount ?? 0, totalUserMessages: 0 };
+    }
+
+    return {
+      totalConversations: convoCount ?? 0,
+      totalUserMessages: msgCount ?? 0,
+    };
+  } catch (err) {
+    console.warn("[HER DB] Rapport stats exception:", err);
+    return { totalConversations: 0, totalUserMessages: 0 };
+  }
+}
+
+/**
  * One-time setup: ensure user has a profile.
  * Prefers the authenticated user ID; falls back to device UUID for guests.
  * Call this once when the chat page mounts.

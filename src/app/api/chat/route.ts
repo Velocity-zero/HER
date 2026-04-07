@@ -74,10 +74,11 @@ export async function POST(req: NextRequest) {
     const payload = buildPayload(body.messages, {
       mode: body.mode || "default",
       continuityContext: body.continuityContext,
+      rapportLevel: body.rapportLevel,
     });
 
     console.log(
-      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, stream: ${wantsStream})`
+      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, rapport: ${body.rapportLevel ?? 0}, stream: ${wantsStream})`
     );
 
     // ── Streaming path ──

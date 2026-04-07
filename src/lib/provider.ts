@@ -53,7 +53,7 @@ async function nvidiaProvider(messages: ModelMessage[]): Promise<string> {
     body: JSON.stringify({
       model: NVIDIA_CHAT_MODEL,
       messages: toNvidiaMessages(messages),
-      max_tokens: 512,
+      max_tokens: 256,
       temperature: 0.75,
       top_p: 0.9,
       frequency_penalty: 0.3,
@@ -93,7 +93,7 @@ async function* nvidiaStreamProvider(
     body: JSON.stringify({
       model: NVIDIA_CHAT_MODEL,
       messages: toNvidiaMessages(messages),
-      max_tokens: 512,
+      max_tokens: 256,
       temperature: 0.75,
       top_p: 0.9,
       frequency_penalty: 0.3,

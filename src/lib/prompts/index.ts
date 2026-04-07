@@ -26,36 +26,62 @@ import { BOUNDARIES } from "./boundaries";
 import { DYNAMICS } from "./dynamics";
 import { INITIATIVE } from "./initiative";
 import { MODE_OVERLAYS } from "./modes";
+import { buildRapportContext, type RapportLevel } from "../rapport";
 
 // ── Public Exports ─────────────────────────────────────────
 
 export const HER_NAME = "HER";
 
-export const HER_GREETINGS = [
+/** Greetings for brand new users (rapport 0) */
+export const NEW_USER_GREETINGS = [
+  "hey! i don't think we've met.",
+  "oh hi. you're new here, right?",
+  "hey. first time? cool, i'm HER.",
+  "hi there. what's your name?",
+  "hey! so what brings you here?",
+  "hi. i'm HER. what should i call you?",
+];
+
+/** Greetings for returning users (rapport 1+) */
+export const RETURNING_GREETINGS = [
   "hey, what's up?",
   "oh hey. perfect timing.",
-  "hiii. tell me everything.",
   "hey you. what are we doing today?",
   "okay i'm here. what's going on?",
-  "heyyy. i was literally just thinking about something random.",
   "hey! okay go — what's on your mind?",
   "hi. you first.",
+];
+
+/** Greetings for familiar/close users (rapport 3+) */
+export const CLOSE_GREETINGS = [
+  "hiii. tell me everything.",
+  "heyyy. i was literally just thinking about something random.",
   "finally. okay what's new?",
   "hey. missed me? obviously you did.",
+  "okay i'm back. what did i miss?",
 ];
+
+/** Backward-compatible flat list */
+export const HER_GREETINGS = [...NEW_USER_GREETINGS, ...RETURNING_GREETINGS, ...CLOSE_GREETINGS];
 
 /** The original greeting — kept for backward compatibility */
 export const HER_GREETING = HER_GREETINGS[0];
 
-/** Pick a random greeting for a new session */
-export function randomGreeting(): string {
-  return HER_GREETINGS[Math.floor(Math.random() * HER_GREETINGS.length)];
+/** Pick a rapport-appropriate greeting */
+export function randomGreeting(rapportLevel: number = 0): string {
+  const pool =
+    rapportLevel >= 3 ? CLOSE_GREETINGS :
+    rapportLevel >= 1 ? RETURNING_GREETINGS :
+    NEW_USER_GREETINGS;
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // ── System Prompt Builder ──────────────────────────────────
 
 interface PromptOptions {
   mode?: ConversationMode;
+  /** Rapport level (0–4) — drives progressive bonding behavior */
+  rapportLevel?: RapportLevel;
   /** Optional pre-built summary of earlier conversation */
   conversationSummary?: string;
   /** Optional memory notes about the user (future) */
@@ -82,6 +108,7 @@ export function buildSystemPrompt(options: PromptOptions = {}): string {
     PERSONA,
     STYLE,
     DYNAMICS,
+    buildRapportContext(options.rapportLevel ?? 0),
     INITIATIVE,
     BOUNDARIES,
   ];

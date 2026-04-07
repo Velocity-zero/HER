@@ -96,6 +96,8 @@ export interface ContextOptions {
   memoryContext?: string;
   /** Compact continuity context for anti-repetition */
   continuityContext?: string;
+  /** Rapport level (0–4) for progressive bonding */
+  rapportLevel?: number;
 }
 
 /**
@@ -132,6 +134,7 @@ export function buildContext(
   // Assemble system prompt with all layers
   const systemContent = buildSystemPrompt({
     mode: options.mode,
+    rapportLevel: (options.rapportLevel ?? 0) as import("./rapport").RapportLevel,
     conversationSummary: summary ?? undefined,
     memoryContext: memory ?? undefined,
     continuityContext: options.continuityContext,

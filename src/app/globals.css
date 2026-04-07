@@ -412,8 +412,8 @@ input[type="text"] {
 
 .message-content {
   overflow-wrap: break-word;
-  word-break: break-word;
-  hyphens: auto;
+  word-break: normal;
+  hyphens: none;
 }
 
 /* ── History Drawer ──────────────────────────────────── */

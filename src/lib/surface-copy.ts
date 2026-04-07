@@ -50,19 +50,39 @@ export function pickUnique<T>(items: readonly T[], count: number): T[] {
 
 // ── Curated Copy Pools ──────────────────────────────────────
 
-export const GREETING_POOL = [
+export const NEW_GREETING_POOL = [
+  "hey! i don't think we've met.",
+  "oh hi. you're new here, right?",
+  "hey. first time? cool, i'm HER.",
+  "hi there. what's your name?",
+  "hey! so what brings you here?",
+  "hi. i'm HER. what should i call you?",
+] as const;
+
+export const RETURNING_GREETING_POOL = [
   "hey, what's up?",
   "okay i'm here. what's going on?",
-  "heyyy. spill.",
   "oh hey — perfect timing actually.",
   "hi. you go first.",
   "what are we doing today?",
-  "hey. i've been bored — entertain me.",
   "alright. what's new?",
-  "hiii. okay go.",
-  "hey you. missed me? obviously.",
   "yo. what's happening?",
 ] as const;
+
+export const CLOSE_GREETING_POOL = [
+  "heyyy. spill.",
+  "hiii. okay go.",
+  "hey you. missed me? obviously.",
+  "hey. i've been bored — entertain me.",
+  "finally. okay what's new?",
+] as const;
+
+/** Flat pool for backward compat */
+export const GREETING_POOL = [
+  ...NEW_GREETING_POOL,
+  ...RETURNING_GREETING_POOL,
+  ...CLOSE_GREETING_POOL,
+] as unknown as readonly string[];
 
 export const STARTER_PROMPT_POOL = [
   "i need to get something off my chest",
@@ -167,10 +187,16 @@ const OPENING_SUBTEXT_POOL = [
 /**
  * Creates a fresh SurfaceCopyBundle with random selections.
  * Call this once on app load and once per New Chat — store the result.
+ * Pass rapportLevel to pick rapport-appropriate greetings.
  */
-export function createSurfaceCopyBundle(): SurfaceCopyBundle {
+export function createSurfaceCopyBundle(rapportLevel: number = 0): SurfaceCopyBundle {
+  const greetingPool =
+    rapportLevel >= 3 ? CLOSE_GREETING_POOL :
+    rapportLevel >= 1 ? RETURNING_GREETING_POOL :
+    NEW_GREETING_POOL;
+
   return {
-    greeting: pickOne(GREETING_POOL),
+    greeting: pickOne(greetingPool as unknown as readonly string[]),
     starterPrompts: pickUnique(STARTER_PROMPT_POOL, 4),
     thinkingLabel: pickOne(THINKING_LABEL_POOL),
     replyingLabel: pickOne(REPLYING_LABEL_POOL),

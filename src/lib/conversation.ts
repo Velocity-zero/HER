@@ -51,6 +51,7 @@ export function buildPayload(
     recentCount: fullConfig.maxMessages,
     memoryContext: fullConfig.memoryContext,
     continuityContext: fullConfig.continuityContext,
+    rapportLevel: fullConfig.rapportLevel,
   };
 
   return buildContext(messages, contextOptions);

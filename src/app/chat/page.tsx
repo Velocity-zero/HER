@@ -18,9 +18,11 @@ import {
   getConversationMessages,
   updateConversationTitle,
   deleteConversation,
+  getUserRapportStats,
   type ConversationSummary,
   type DbMessage,
 } from "@/lib/supabase-persistence";
+import { computeRapportLevel, type RapportLevel } from "@/lib/rapport";
 import { useAuth } from "@/components/AuthProvider";
 import ChatHeader from "@/components/chat/ChatHeader";
 import ChatWindow from "@/components/chat/ChatWindow";
@@ -161,6 +163,34 @@ export default function ChatPage() {
 
   // ── Retry state — stores the last failed user message for retry ──
   const [retryContent, setRetryContent] = useState<{ content: string; image?: string } | null>(null);
+
+  // ── Rapport system — progressive bonding ──
+  const [rapportLevel, setRapportLevel] = useState<RapportLevel>(0);
+  const rapportStatsRef = useRef({ totalConversations: 0, totalUserMessages: 0 });
+
+  // Fetch rapport stats once on mount (fire-and-forget)
+  useEffect(() => {
+    getEffectiveUserId().then((userId) =>
+      getUserRapportStats(userId).then((stats) => {
+        rapportStatsRef.current = stats;
+        const currentUserMsgs = messages.filter((m) => m.role === "user").length;
+        const level = computeRapportLevel({
+          ...stats,
+          currentMessageCount: currentUserMsgs,
+        });
+        setRapportLevel(level);
+
+        // If rapport > 0, regenerate surface copy with appropriate greetings
+        // (only if still on the initial greeting — don't disrupt ongoing chat)
+        if (level > 0 && messages.length === 1 && messages[0].id === "greeting") {
+          const freshCopy = createSurfaceCopyBundle(level);
+          setSurfaceCopy(freshCopy);
+          setMessages([createGreeting(freshCopy.greeting)]);
+        }
+      })
+    ).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Restore from localStorage (client-only, after hydration) ──
   useEffect(() => {
@@ -511,11 +541,19 @@ export default function ChatPage() {
     const continuity = buildContinuity(updatedMessages);
     const continuityContext = buildContinuityBlock(continuity) ?? undefined;
 
+    // Update rapport level with current message count
+    const currentUserMsgs = updatedMessages.filter((m) => m.role === "user").length;
+    const currentRapport = computeRapportLevel({
+      ...rapportStatsRef.current,
+      currentMessageCount: currentUserMsgs,
+    });
+    setRapportLevel(currentRapport);
+
     try {
       const res = await fetch("/api/chat?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updatedMessages, mode: conversationMode, continuityContext }),
+        body: JSON.stringify({ messages: updatedMessages, mode: conversationMode, rapportLevel: currentRapport, continuityContext }),
         signal: controller.signal,
       });
 
@@ -841,7 +879,7 @@ export default function ChatPage() {
     setActiveConvoId(null);
 
     // Generate fresh surface copy for the new session
-    const freshCopy = createSurfaceCopyBundle();
+    const freshCopy = createSurfaceCopyBundle(rapportLevel);
     setSurfaceCopy(freshCopy);
     setMessages([createGreeting(freshCopy.greeting)]);
 
@@ -855,7 +893,7 @@ export default function ChatPage() {
     setConversationMode("default");
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
-  }, []);
+  }, [rapportLevel]);
 
   // ── Rename a conversation ──
   const handleRenameConversation = useCallback(
@@ -885,7 +923,7 @@ export default function ChatPage() {
           clearSession();
           clearActiveConversationId();
           setActiveConvoId(null);
-          const freshCopy = createSurfaceCopyBundle();
+          const freshCopy = createSurfaceCopyBundle(rapportLevel);
           setSurfaceCopy(freshCopy);
           setMessages([createGreeting(freshCopy.greeting)]);
           setError(null);
