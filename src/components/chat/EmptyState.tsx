@@ -11,14 +11,14 @@ import { useState, useEffect } from "react";
  */
 
 const FALLBACK_SUGGESTIONS = [
-  "tell me about your day",
-  "i can't sleep",
-  "make me smile",
+  "what's good?",
+  "i'm bored entertain me",
+  "make me laugh",
   "help me figure something out",
 ];
 
-const FALLBACK_OPENING_LINE = "it's just us.";
-const FALLBACK_SUBTEXT = "say anything — or nothing at all";
+const FALLBACK_OPENING_LINE = "hey.";
+const FALLBACK_SUBTEXT = "say whatever";
 
 interface EmptyStateProps {
   /** Prefill the composer with a suggestion */

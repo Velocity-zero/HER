@@ -51,17 +51,17 @@ export function pickUnique<T>(items: readonly T[], count: number): T[] {
 // ── Curated Copy Pools ──────────────────────────────────────
 
 export const GREETING_POOL = [
-  "hey. what are we getting into today?",
-  "hi. so — what's happening?",
-  "okay, i'm ready. go.",
-  "hey. caught you at a good time?",
-  "hi. tell me something — anything.",
-  "what's the plan?",
-  "hey. you look like you've got something on your mind.",
-  "alright. where are we starting?",
-  "hi. i was hoping you'd show up.",
-  "hey. long day or good day?",
-  "hi. what do you need right now?",
+  "hey, what's up?",
+  "okay i'm here. what's going on?",
+  "heyyy. spill.",
+  "oh hey — perfect timing actually.",
+  "hi. you go first.",
+  "what are we doing today?",
+  "hey. i've been bored — entertain me.",
+  "alright. what's new?",
+  "hiii. okay go.",
+  "hey you. missed me? obviously.",
+  "yo. what's happening?",
 ] as const;
 
 export const STARTER_PROMPT_POOL = [
@@ -90,11 +90,11 @@ export const STARTER_PROMPT_POOL = [
 const THINKING_LABEL_POOL = [
   "thinking…",
   "one sec…",
-  "hold that thought…",
-  "chewing on it…",
-  "processing…",
-  "let me sit with that…",
+  "hold on…",
+  "hmm…",
+  "okay wait…",
   "working on it…",
+  "gimme a sec…",
   "okay hang on…",
 ] as const;
 
@@ -102,11 +102,11 @@ const REPLYING_LABEL_POOL = [
   "typing…",
   "almost…",
   "writing…",
-  "coming together…",
-  "bear with me…",
+  "one sec…",
+  "hang on…",
   "right there…",
   "nearly…",
-  "got it, one sec…",
+  "almost done…",
 ] as const;
 
 const IMAGE_GENERATING_LABEL_POOL = [
@@ -143,23 +143,23 @@ const STUDIO_PLACEHOLDER_POOL = [
 ] as const;
 
 const OPENING_LINE_POOL = [
-  "it's just us.",
+  "hey.",
   "okay — go.",
-  "right on time.",
+  "finally.",
   "you've got my attention.",
-  "let's do something.",
+  "what's good?",
   "all yours.",
-  "ready when you are.",
+  "talk to me.",
   "here we go.",
 ] as const;
 
 const OPENING_SUBTEXT_POOL = [
-  "say anything — or nothing at all",
+  "say whatever",
   "start wherever",
-  "no wrong way to begin",
-  "talk, build, or just think out loud",
-  "we'll figure it out from here",
-  "whatever comes to mind",
+  "no wrong answers",
+  "talk, vent, or just hang",
+  "we'll figure it out",
+  "whatever's on your mind",
 ] as const;
 
 // ── Bundle Generator ────────────────────────────────────────

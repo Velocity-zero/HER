@@ -30,7 +30,8 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import HistoryDrawer from "@/components/chat/HistoryDrawer";
 import EmptyState from "@/components/chat/EmptyState";
 import ImageStudio from "@/components/chat/ImageStudio";
-import type { ImageStudioMode } from "@/lib/types";
+import ModeSelector from "@/components/chat/ModeSelector";
+import type { ImageStudioMode, ConversationMode } from "@/lib/types";
 
 /**
  * HER opens every conversation with a greeting.
@@ -60,15 +61,33 @@ function dbMessageToUiMessage(dbMsg: DbMessage): Message {
 
 const IMAGE_PATTERNS = [
   /\b(generate|create|make|paint|draw|sketch|design)\b.{0,20}\b(image|picture|photo|illustration|art|painting|portrait|drawing)\b/i,
-  /\b(imagine|visualize|picture)\b.{0,30}\b(of|for|with|a|an|the|me)\b/i,
-  /\b(show me|can you draw|can you paint|can you create|can you make)\b/i,
-  /\bdraw\s+(me\s+)?a\b/i,
+  /\b(imagine|visualize)\b.{0,30}\b(of|for|with|a|an|the|me)\b/i,
+  /\b(can you draw|can you paint|can you create|can you make)\b.{0,20}\b(image|picture|photo|illustration|art|painting|portrait|drawing|a|an|the|me)\b/i,
+  /\bdraw\s+(me\s+)?a\b(?!\s+(bath|blank|conclusion|line|comparison|parallel|breath|crowd|salary|paycheck))/i,
   /\bpaint\s+(me\s+)?a\b/i,
   /\bsketch\s+(me\s+)?a\b/i,
 ];
 
+/** Phrases that look like image requests but aren't */
+const IMAGE_NEGATIVE_PATTERNS = [
+  /\bdraw\s+(a\s+)?bath\b/i,
+  /\bdraw\s+(a\s+)?(blank|conclusion|line|comparison|parallel|breath)\b/i,
+  /\bpicture\s+(this|that|it)\b/i,
+  /\bcan\s+you\s+picture\b/i,
+  /\bshow\s+me\s+(how|what|where|why|when|around|the\s+way)\b/i,
+  /\bbig\s+picture\b/i,
+  /\bget\s+the\s+picture\b/i,
+  /\bpaint\s+(a\s+)?picture\s+of\s+(what|how|the\s+situation)\b/i,
+  /\bdraw\s+(a\s+)?line\b/i,
+  /\bcreate\s+(a\s+)?(plan|list|schedule|account|profile|password|playlist)\b/i,
+  /\bmake\s+(a\s+)?(plan|list|decision|choice|call|point|deal|joke|move|mess|mistake|change|difference)\b/i,
+  /\bdesign\s+(a\s+)?(plan|system|strategy|approach|workflow|process)\b/i,
+];
+
 /** Detect if a user message is asking for image generation */
 function isImageRequest(text: string): boolean {
+  // Check negative patterns first — bail out if it's a common phrase
+  if (IMAGE_NEGATIVE_PATTERNS.some((pattern) => pattern.test(text))) return false;
   return IMAGE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
@@ -136,6 +155,12 @@ export default function ChatPage() {
     sourceImage?: string;
   } | null>(null);
   const [studioKey, setStudioKey] = useState(0);
+
+  // ── Conversation mode ──
+  const [conversationMode, setConversationMode] = useState<ConversationMode>("default");
+
+  // ── Retry state — stores the last failed user message for retry ──
+  const [retryContent, setRetryContent] = useState<{ content: string; image?: string } | null>(null);
 
   // ── Restore from localStorage (client-only, after hydration) ──
   useEffect(() => {
@@ -213,6 +238,7 @@ export default function ChatPage() {
     setStudioOpen(false);
     setLastRevisedPrompt(null);
     setStudioError(null);
+    setRetryContent(null);
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
     setError(null);
@@ -235,44 +261,20 @@ export default function ChatPage() {
     setConversations(convos);
   }, [isAuthenticated, user?.id]);
 
-  // ── Emergency-only microcopy fallback pools (used only when /api/microcopy is unreachable) ──
-  const LOCAL_THINKING = [surfaceCopy.thinkingLabel, "give me a second…"];
-  const LOCAL_VISION = ["let me look closely…", "taking it in…"];
+  // ── Local microcopy pools (no API calls — instant, zero latency) ──
+  const LOCAL_VISION = ["okay let me see…", "looking…"];
   const LOCAL_IMAGE = [surfaceCopy.imageGeneratingLabel, "working on it…"];
-  const LOCAL_IMAGE_CAPTIONS = ["here's what i imagined ✨", "i made this for you ✨"];
+  const LOCAL_IMAGE_CAPTIONS = ["here you go", "okay how's this"];
   const LOCAL_IMAGE_FAIL = [
-    "i couldn't quite get that just now… try again in a moment.",
-    "something got in the way of that image… give me another chance?",
+    "that didn't work — try again?",
+    "image generation broke — give it another shot?",
   ];
   const LOCAL_VISION_FAIL = [
-    "i couldn't read that image just now… try another one.",
-    "i looked closely but couldn't put it into words… try again?",
+    "couldn't read that image — try another one?",
+    "got nothing from that — try again?",
   ];
 
   const pickRandom = (pool: string[]) => pool[Math.floor(Math.random() * pool.length)];
-
-  /** Fetch dynamic microcopy from the API, with instant local fallback */
-  const fetchMicrocopy = async (
-    context: "chat_thinking" | "vision_processing" | "image_generating" | "soft_error",
-    fallbackPool: string[],
-    timeoutMs: number = 500
-  ): Promise<string> => {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      const res = await fetch(`/api/microcopy?context=${context}`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.text && data.text.length > 1) return data.text;
-      }
-    } catch {
-      // Timeout or network error — use fallback
-    }
-    return pickRandom(fallbackPool);
-  };
 
   // ── Send a message (with streaming response) ──
   const handleSend = useCallback(async (content: string, image?: string) => {
@@ -344,7 +346,7 @@ export default function ChatPage() {
     // Create a stable ID for the streaming assistant message
     const herMessageId = generateId();
 
-    // ── Human pacing — brief pause so HER feels present, not instant ──
+    // ── Human pacing — brief pause so responses don't feel instant ──
     const humanDelay = () =>
       new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
 
@@ -357,9 +359,6 @@ export default function ChatPage() {
         setIsTyping(false);
         setIsStreaming(true);
 
-        // Fetch dynamic microcopy in parallel (non-blocking)
-        const microcopyPromise = fetchMicrocopy("vision_processing", LOCAL_VISION);
-
         const herPlaceholder: Message = {
           id: herMessageId,
           role: "assistant",
@@ -369,18 +368,7 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, herPlaceholder]);
         setScrollTrigger((n) => n + 1);
 
-        // Upgrade placeholder if dynamic microcopy arrives before the real response
-        let finalized = false;
-        microcopyPromise.then((text) => {
-          if (finalized) return;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === herMessageId && m.content.length < 40
-                ? { ...m, content: text }
-                : m
-            )
-          );
-        });
+        await humanDelay();
 
         const res = await fetch("/api/vision", {
           method: "POST",
@@ -401,7 +389,6 @@ export default function ChatPage() {
         }
 
         // ── Vision complete — finalize ──
-        finalized = true;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === herMessageId
@@ -448,9 +435,6 @@ export default function ChatPage() {
         setIsTyping(false);
         setIsStreaming(true);
 
-        // Fetch dynamic microcopy in parallel (non-blocking)
-        const microcopyPromise = fetchMicrocopy("image_generating", LOCAL_IMAGE);
-
         const herPlaceholder: Message = {
           id: herMessageId,
           role: "assistant",
@@ -461,18 +445,6 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, herPlaceholder]);
         setScrollTrigger((n) => n + 1);
 
-        // Upgrade placeholder if dynamic microcopy arrives during human pacing
-        microcopyPromise.then((text) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === herMessageId && m.imageLoading
-                ? { ...m, content: text }
-                : m
-            )
-          );
-        });
-
-        // ── Human pacing — let the imagining state breathe ──
         await humanDelay();
 
         const res = await fetch("/api/imagine", {
@@ -543,7 +515,7 @@ export default function ChatPage() {
       const res = await fetch("/api/chat?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updatedMessages, continuityContext }),
+        body: JSON.stringify({ messages: updatedMessages, mode: conversationMode, continuityContext }),
         signal: controller.signal,
       });
 
@@ -557,9 +529,6 @@ export default function ChatPage() {
       setIsTyping(false);
       setIsStreaming(true);
 
-      // Fetch dynamic microcopy in parallel (non-blocking)
-      const microcopyPromise = fetchMicrocopy("chat_thinking", LOCAL_THINKING);
-
       // Insert placeholder — starts empty (triggers "thinking…" in MessageBubble)
       const herPlaceholder: Message = {
         id: herMessageId,
@@ -569,18 +538,6 @@ export default function ChatPage() {
       };
       setMessages((prev) => [...prev, herPlaceholder]);
 
-      // Upgrade placeholder with dynamic microcopy if it arrives quickly
-      microcopyPromise.then((text) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === herMessageId && m.content === ""
-              ? { ...m, content: text }
-              : m
-          )
-        );
-      });
-
-      // ── Human pacing — let the thinking state breathe ──
       await humanDelay();
 
       // ── Read the stream chunk by chunk ──
@@ -608,7 +565,7 @@ export default function ChatPage() {
 
       // ── Stream complete — finalize ──
       if (!fullText) {
-        throw new Error("i got a little lost in my thoughts… can you try again?");
+        throw new Error("wait something broke on my end — try that again?");
       }
 
       // Ensure final state is clean
@@ -619,6 +576,9 @@ export default function ChatPage() {
             : m
         )
       );
+
+      // Clear retry state on success
+      setRetryContent(null);
 
       // ── Persist FINAL assistant message to Supabase (fire-and-forget) ──
       if (convoId) {
@@ -640,6 +600,9 @@ export default function ChatPage() {
       const msg = err instanceof Error ? err.message : "something went wrong";
       setError(msg);
 
+      // Store retry info so user can try again
+      setRetryContent({ content: userMessage.content, image: image ?? undefined });
+
       // Remove the empty/partial placeholder if stream failed
       setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
     } finally {
@@ -648,7 +611,22 @@ export default function ChatPage() {
       sendingRef.current = false;
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [activeConvoId, refreshConversations]);
+  }, [activeConvoId, refreshConversations, conversationMode]);
+  const handleRetry = useCallback(() => {
+    if (!retryContent) return;
+    setError(null);
+    setRetryContent(null);
+    // Remove the last user message (we'll re-send it)
+    setMessages((prev) => {
+      // Find last user message and remove it
+      const lastUserIdx = [...prev].reverse().findIndex((m) => m.role === "user");
+      if (lastUserIdx === -1) return prev;
+      const idx = prev.length - 1 - lastUserIdx;
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+    });
+    // Re-send
+    handleSend(retryContent.content, retryContent.image);
+  }, [retryContent, handleSend]);
 
   // ── Friendly error mapper for Image Studio ──
   function mapStudioError(raw: string): string {
@@ -762,11 +740,12 @@ export default function ChatPage() {
 
     const herMessageId = generateId();
 
+    const humanDelay = () =>
+      new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
+
     try {
       setIsTyping(false);
       setIsStreaming(true);
-
-      const microcopyPromise = fetchMicrocopy("image_generating", LOCAL_IMAGE);
 
       const herPlaceholder: Message = {
         id: herMessageId,
@@ -778,16 +757,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, herPlaceholder]);
       setScrollTrigger((n) => n + 1);
 
-      microcopyPromise.then((text) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === herMessageId && m.imageLoading ? { ...m, content: text } : m
-          )
-        );
-      });
-
-      // Brief human pacing
-      await new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
+      await humanDelay();
 
       const res = await fetch("/api/imagine", {
         method: "POST",
@@ -823,7 +793,7 @@ export default function ChatPage() {
       }
 
       const captionText = request.mode === "edit"
-        ? pickRandom(["here's the edit ✨", "transformed ✨", "how's this? ✨"])
+        ? pickRandom(["here's the edit", "done", "how's this"])
         : pickRandom(LOCAL_IMAGE_CAPTIONS);
 
       setMessages((prev) =>
@@ -881,6 +851,8 @@ export default function ChatPage() {
     setStudioOpen(false);
     setLastRevisedPrompt(null);
     setStudioError(null);
+    setRetryContent(null);
+    setConversationMode("default");
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
   }, []);
@@ -962,6 +934,13 @@ export default function ChatPage() {
       <ChatHeader
         onClear={handleClear}
         onHistoryOpen={() => setHistoryOpen(true)}
+      />
+
+      {/* Conversation mode selector — auto-hides after a few seconds */}
+      <ModeSelector
+        mode={conversationMode}
+        onChange={setConversationMode}
+        disabled={isTyping || isStreaming}
       />
 
       {/* History drawer */}
@@ -1046,7 +1025,7 @@ export default function ChatPage() {
 
         {/* Error toast */}
         {error && (
-          <div className="animate-fade-in mb-5 flex justify-center px-3 sm:px-0">
+          <div className="animate-fade-in mb-5 flex flex-col items-center gap-2 px-3 sm:px-0">
             <button
               onClick={dismissError}
               className="min-h-[44px] rounded-[18px] bg-her-accent/[0.05] px-5 py-3 text-[12px] leading-[1.5] text-her-accent/70 shadow-[0_1px_4px_rgba(180,140,110,0.04)] transition-colors duration-300 hover:bg-her-accent/[0.09] sm:px-6 sm:text-[13px]"
@@ -1054,6 +1033,14 @@ export default function ChatPage() {
               {error}
               <span className="ml-2.5 text-her-accent/25">✕</span>
             </button>
+            {retryContent && (
+              <button
+                onClick={handleRetry}
+                className="rounded-full border border-her-accent/15 px-4 py-1.5 text-[11px] tracking-[0.04em] text-her-accent/55 transition-all duration-200 hover:bg-her-accent/[0.06] hover:text-her-accent/75 active:scale-[0.96]"
+              >
+                try again
+              </button>
+            )}
           </div>
         )}
       </ChatWindow>

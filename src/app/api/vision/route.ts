@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
     if (image.length > MAX_PAYLOAD_SIZE) {
       return NextResponse.json(
-        { error: "that image is a bit too large for me to study… try a smaller one?" },
+        { error: "that image is way too big — try a smaller one?" },
         { status: 413 }
       );
     }
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
       if (res.status === 429) {
         const msg = await generateSoftError(
           "rate limited while analyzing an image",
-          "i need a moment to rest my eyes… try again in about 30 seconds?"
+          "okay too many requests — try again in like 30 seconds."
         );
         return NextResponse.json({ error: msg }, { status: 429 });
       }
@@ -116,14 +116,14 @@ export async function POST(req: NextRequest) {
       if (res.status === 413 || res.status === 400) {
         const msg = await generateSoftError(
           "image was too large or complex to analyze",
-          "that image was a bit much for me… try a smaller or simpler one?"
+          "that image is too big — try a smaller one?"
         );
         return NextResponse.json({ error: msg }, { status: 400 });
       }
 
       const msg = await generateSoftError(
         "vision model returned an error",
-        "i couldn't read that image just now… try another one."
+        "couldn't read that image — try another one?"
       );
       return NextResponse.json({ error: msg }, { status: 502 });
     }
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
       );
       const emptyMsg = await generateSoftError(
         "vision model returned empty analysis",
-        "i looked closely but couldn't put it into words… try again?"
+        "got nothing from that image somehow — try again?"
       );
       return NextResponse.json({ error: emptyMsg }, { status: 502 });
     }
@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
 
     const fallbackMsg = await generateSoftError(
       "unexpected error during image analysis",
-      "i couldn't read that image just now… try another one."
+      "couldn't read that image — try another one?"
     );
     return NextResponse.json({ error: fallbackMsg }, { status: 502 });
   }

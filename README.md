@@ -1,7 +1,7 @@
 # HER — Your AI Companion
 
 A warm, emotionally immersive AI companion web app inspired by the film *Her* (2013).  
-Built with **Next.js**, **TypeScript**, **Tailwind CSS**, and **Google Gemini**.
+Built with **Next.js**, **TypeScript**, **Tailwind CSS**, and **NVIDIA NIM** (Mistral Large 3).
 
 ---
 
@@ -40,15 +40,15 @@ This will create a `node_modules` folder with all required packages. It may take
 Create a file called **`.env.local`** in the project root (right next to `package.json`) with this content:
 
 ```
-HER_PROVIDER=gemini
-GEMINI_API_KEY=your_api_key_here
+HER_PROVIDER=nvidia
+NVIDIA_CHAT_API_KEY=your_chat_key_here
 ```
 
-**To get a free Gemini API key:**
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Sign in with a Google account
-3. Click **"Create API Key"**
-4. Copy the key and paste it in place of `your_api_key_here`
+**To get a free NVIDIA NIM API key:**
+1. Go to [NVIDIA Build](https://build.nvidia.com/)
+2. Sign in or create an NVIDIA account
+3. Search for **Mistral Large 3** and click **"Get API Key"**
+4. Copy the key and paste it in place of `your_chat_key_here`
 
 > ⚠️ **Important:** The `.env.local` file is intentionally excluded from the zip for security. Each person needs their own API key.
 
@@ -85,13 +85,13 @@ HER/
 │   ├── app/                  ← Pages & API routes
 │   │   ├── page.tsx              Landing page
 │   │   ├── chat/page.tsx         Chat interface
-│   │   ├── api/chat/route.ts     Gemini API endpoint
+│   │   ├── api/chat/route.ts     NVIDIA NIM API endpoint
 │   │   └── globals.css           Design system & palette
 │   ├── components/           ← UI components
 │   │   └── chat/                 ChatHeader, ChatWindow, ChatInput,
 │   │                             MessageBubble, TypingIndicator
 │   └── lib/                  ← Core logic
-│       ├── provider.ts           AI provider (Gemini)
+│       ├── provider.ts           AI provider (NVIDIA/Mistral)
 │       ├── prompts/              HER's personality & voice
 │       ├── context.ts            Conversation context builder
 │       ├── conversation.ts       Payload builder
@@ -136,7 +136,7 @@ Everything else should be included in the zip.
 **"Module not found" errors**  
 → Run `npm install` again. You may have missed step 3.
 
-**"GEMINI_API_KEY is not set" or API errors**  
+**"Missing NVIDIA_CHAT_API_KEY" or API errors**  
 → Make sure `.env.local` exists in the project root with a valid key. Restart the dev server after creating/editing it.
 
 **Port 3000 already in use**  
@@ -163,7 +163,9 @@ npm run dev
 - **React 19** — UI framework
 - **TypeScript 5** — Type safety
 - **Tailwind CSS 4** — Styling (warm analog palette)
-- **Google Gemini 2.5 Flash** — AI model via `@google/generative-ai`
+- **NVIDIA NIM / Mistral Large 3** — AI chat model via NVIDIA API
+- **NVIDIA Gemma 3 27B** — Vision analysis
+- **NVIDIA Stable Diffusion / Flux** — Image generation
 
 ---
 

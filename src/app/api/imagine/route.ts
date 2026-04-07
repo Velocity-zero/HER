@@ -145,28 +145,32 @@ export async function POST(req: NextRequest) {
     );
 
     // ── Step 1: Enhance the prompt via Mistral ──
+    // Skip enhancement for already detailed prompts (saves an API call)
+    const isDetailed = originalPrompt.length > 80 && originalPrompt.split(/\s+/).length > 12;
     let finalPrompt = originalPrompt;
-    try {
-      const enhancerMessages =
-        model.mode === "edit"
-          ? buildEditPromptEnhancerMessages(originalPrompt)
-          : buildImagePromptEnhancerMessages(originalPrompt);
 
-      // Use slightly higher temperature + more tokens for short prompts to encourage creative expansion
-      const enhanced = await nvidiaChat(enhancerMessages, {
-        maxTokens: short ? 400 : 300,
-        temperature: model.mode === "edit" ? 0.4 : short ? 0.68 : 0.6,
-        topP: 0.9,
-      });
-      // Sanitize: strip any quotes the model might wrap around the output
-      finalPrompt = enhanced.replace(/^"|"$/g, "").trim() || originalPrompt;
-      console.log(`[HER Imagine] Enhanced prompt: "${finalPrompt.slice(0, 120)}"`);
-    } catch (enhanceErr) {
-      // If enhancement fails, fall back to original prompt gracefully
-      console.warn(
-        "[HER Imagine] Prompt enhancement failed, using original:",
-        enhanceErr instanceof Error ? enhanceErr.message : enhanceErr
-      );
+    if (isDetailed && model.mode !== "edit") {
+      console.log(`[HER Imagine] Prompt already detailed (${originalPrompt.length} chars) — skipping enhancement`);
+    } else {
+      try {
+        const enhancerMessages =
+          model.mode === "edit"
+            ? buildEditPromptEnhancerMessages(originalPrompt)
+            : buildImagePromptEnhancerMessages(originalPrompt);
+
+        const enhanced = await nvidiaChat(enhancerMessages, {
+          maxTokens: short ? 400 : 300,
+          temperature: model.mode === "edit" ? 0.4 : short ? 0.68 : 0.6,
+          topP: 0.9,
+        });
+        finalPrompt = enhanced.replace(/^"|"$/g, "").trim() || originalPrompt;
+        console.log(`[HER Imagine] Enhanced prompt: "${finalPrompt.slice(0, 120)}"`);
+      } catch (enhanceErr) {
+        console.warn(
+          "[HER Imagine] Prompt enhancement failed, using original:",
+          enhanceErr instanceof Error ? enhanceErr.message : enhanceErr
+        );
+      }
     }
 
     // ── Step 2: Build payload from model registry ──

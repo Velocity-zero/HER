@@ -33,12 +33,12 @@ function classifyError(errorMessage: string): { userError: string; status: numbe
     return { userError: errorMessage, status: 500 };
   } else if (isRateLimit) {
     return {
-      userError: "i need a moment to catch my breath… try again in about 30 seconds.",
+      userError: "okay hold on, too many messages at once — try again in like 30 seconds.",
       status: 429,
     };
   } else {
     return {
-      userError: "i got a little lost in my thoughts… can you try again?",
+      userError: "wait something broke on my end — try that again?",
       status: 502,
     };
   }

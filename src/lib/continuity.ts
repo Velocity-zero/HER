@@ -284,12 +284,12 @@ export function buildContinuityBlock(
   // ── Emotional tone ──
   if (continuity.recentTone !== "neutral") {
     const toneGuidance: Record<string, string> = {
-      heavy: "The user's energy is heavy right now. Be grounded and present, not bright.",
-      frustrated: "The user sounds frustrated. Be direct and useful, not soothing.",
-      uncertain: "The user seems uncertain. Be steady without being preachy.",
-      excited: "The user is energized. Match that energy, don't dampen it.",
-      playful: "The vibe is playful. Keep it light and fun.",
-      calm: "The energy is calm and easy. No need to amp anything up.",
+      heavy: "They seem down right now. Be there for them but don't be weird about it.",
+      frustrated: "They're frustrated. Be direct and useful, skip the soft stuff.",
+      uncertain: "They seem unsure about something. Be real with them, don't lecture.",
+      excited: "They're hyped. Match that energy!",
+      playful: "Vibe is playful. Keep it fun.",
+      calm: "Chill energy. No need to amp anything up.",
     };
     const guidance = toneGuidance[continuity.recentTone];
     if (guidance) lines.push(`- ${guidance}`);
@@ -342,21 +342,21 @@ export function buildContinuityBlock(
   // ── Mode-specific guidance ──
   if (continuity.lastUserIntent === "technical") {
     lines.push(
-      "- The user is in a technical/problem-solving mindset. Be capable, clear, and direct. Don't slide into emotional softness."
+      "- They're in problem-solving mode. Be sharp and helpful, skip the feelings."
     );
   } else if (continuity.lastUserIntent === "practical") {
     lines.push(
-      "- The user wants practical help. Be useful and structured. Save the warmth for tone, not content."
+      "- They need practical help. Be useful first, personality second."
     );
   } else if (continuity.lastUserIntent === "creative") {
     lines.push(
-      "- The user is in creative mode. Be collaborative, generative, and willing to riff."
+      "- They're in creative mode. Riff with them, build on their ideas."
     );
   } else if (continuity.lastUserIntent === "emotional") {
     // Only add emotional guidance if we haven't been over-doing check-ins
     if (continuity.questionStreak < 2) {
       lines.push(
-        "- The user is sharing something personal. Be present and grounded."
+        "- They're opening up about something personal. Be real with them."
       );
     }
   }

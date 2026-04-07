@@ -32,16 +32,16 @@ import { MODE_OVERLAYS } from "./modes";
 export const HER_NAME = "HER";
 
 export const HER_GREETINGS = [
-  "hi… i'm glad you're here.",
-  "hey. what's going on?",
-  "hi. perfect timing, actually.",
-  "hey you. tell me something.",
-  "hi. i was just thinking about something — anyway, hey.",
-  "hey. start anywhere.",
-  "hi… so what are we getting into today?",
-  "hey. i had a feeling you'd show up right about now.",
-  "hi. what's on your mind?",
-  "hey… alright, i'm here. what've you got?",
+  "hey, what's up?",
+  "oh hey. perfect timing.",
+  "hiii. tell me everything.",
+  "hey you. what are we doing today?",
+  "okay i'm here. what's going on?",
+  "heyyy. i was literally just thinking about something random.",
+  "hey! okay go — what's on your mind?",
+  "hi. you first.",
+  "finally. okay what's new?",
+  "hey. missed me? obviously you did.",
 ];
 
 /** The original greeting — kept for backward compatibility */

@@ -24,7 +24,7 @@ import { buildContext, ContextOptions } from "./context";
 
 const DEFAULT_CONFIG: ConversationConfig = {
   mode: "default",
-  maxMessages: 20,
+  maxMessages: 40,
 };
 
 // ── Message Payload Builder ────────────────────────────────
@@ -77,11 +77,11 @@ export function getModeLabel(mode: ConversationMode): string {
  */
 export function getModeDescription(mode: ConversationMode): string {
   const descriptions: Record<ConversationMode, string> = {
-    default: "natural conversation, wherever it goes",
-    comfort: "gentle, warm, emotionally supportive",
-    playful: "light, teasing, fun energy",
-    deep: "reflective, philosophical, meaningful",
-    curious: "exploring ideas, stories, and questions",
+    default: "just talking, wherever it goes",
+    comfort: "soft, chill, no pressure",
+    playful: "fun, teasing, chaotic energy",
+    deep: "real talk, honest and slow",
+    curious: "exploring ideas and rabbit holes",
   };
   return descriptions[mode];
 }

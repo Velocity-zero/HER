@@ -28,7 +28,7 @@ import { buildSystemPrompt } from "./prompts/index";
  */
 export const CONTEXT_CONFIG = {
   /** Max recent messages to include in the rolling window */
-  recentMessageCount: 20,
+  recentMessageCount: 40,
 
   /** Min messages to always keep (even in aggressive trimming) */
   minMessages: 6,
