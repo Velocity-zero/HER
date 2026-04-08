@@ -64,11 +64,12 @@ export default function EmptyState({ onSuggestion, suggestions, openingLine, ope
       </p>
 
       {/* Suggestion chips */}
-      <div className="flex flex-wrap justify-center gap-2 px-8 sm:gap-2.5 sm:px-6">
+      <div className="flex flex-wrap justify-center gap-2 px-8 sm:gap-2.5 sm:px-6" role="group" aria-label="Conversation starters">
         {chips.map((text, i) => (
           <button
             key={text}
             onClick={() => onSuggestion(text)}
+            aria-label={`Start conversation: ${text}`}
             className="rounded-full border border-her-border/20 bg-her-surface/30 px-4 py-2.5 text-[11px] tracking-[0.04em] text-her-text-muted/40 transition-all duration-300 hover:border-her-accent/20 hover:bg-her-accent/[0.04] hover:text-her-text-muted/60 active:scale-[0.96] sm:px-5 sm:py-2.5 sm:text-[12px]"
             style={{
               animationDelay: `${250 + i * 100}ms`,

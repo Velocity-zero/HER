@@ -29,11 +29,15 @@ export function getSupabaseClient(): SupabaseClient | null {
 
   if (cachedClient) return cachedClient;
 
+  const isServer = typeof window === "undefined";
+
   cachedClient = createClient(supabaseUrl!, supabaseAnonKey!, {
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+      // On the server (API routes / serverless), disable browser-specific auth features
+      // to prevent stale sessions persisting across Lambda invocations
+      persistSession: !isServer,
+      autoRefreshToken: !isServer,
+      detectSessionInUrl: !isServer,
     },
   });
 

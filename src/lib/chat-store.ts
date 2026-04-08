@@ -73,82 +73,87 @@ export function loadSession(): ChatSession | null {
   }
 }
 
+/** Cached session ID so we don't re-read localStorage on every save */
+let _cachedSessionId: string | null = null;
+let _cachedCreatedAt: number | null = null;
+
+/** Debounce timer for saves during streaming */
+let _saveTimer: ReturnType<typeof setTimeout> | null = null;
+const SAVE_DEBOUNCE_MS = 300;
+
+/**
+ * Strip base64 data URLs from messages before persisting to localStorage.
+ * Keeps Supabase image_url references (http/https) intact.
+ * Prevents localStorage quota overflow from embedded images.
+ */
+function stripBase64Images(messages: Message[]): Message[] {
+  return messages.map((m) => {
+    if (m.image && m.image.startsWith("data:")) {
+      return { ...m, image: undefined };
+    }
+    return m;
+  });
+}
+
 /**
  * Save the full message array to localStorage.
  * Wraps messages in a ChatSession envelope so the shape
  * is always consistent and swappable to a DB later.
+ *
+ * - Strips base64 images to avoid exceeding ~5 MB localStorage quota.
+ * - Debounces saves (300ms) during rapid streaming updates.
  */
-export function saveMessages(messages: Message[]): void {
+export function saveMessages(messages: Message[], immediate = false): void {
   if (typeof window === "undefined") return;
 
-  try {
-    // Load existing session to preserve the session id + createdAt
-    const existing = loadSession();
-    const now = Date.now();
+  const doSave = () => {
+    try {
+      // Use cached session metadata to avoid re-reading localStorage
+      if (!_cachedSessionId) {
+        const existing = loadSession();
+        _cachedSessionId = existing?.id ?? generateId();
+        _cachedCreatedAt = existing?.createdAt ?? Date.now();
+      }
 
-    const session: ChatSession & { _v: number } = {
-      id: existing?.id ?? generateId(),
-      messages,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-      _v: STORAGE_VERSION,
-    };
+      const session: ChatSession & { _v: number } = {
+        id: _cachedSessionId,
+        messages: stripBase64Images(messages),
+        createdAt: _cachedCreatedAt ?? Date.now(),
+        updatedAt: Date.now(),
+        _v: STORAGE_VERSION,
+      };
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-  } catch (error) {
-    console.error("[HER store] Failed to save:", error);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch (error) {
+      // QuotaExceededError — try saving without images as last resort
+      if (error instanceof DOMException && error.name === "QuotaExceededError") {
+        console.warn("[HER store] Quota exceeded — saving text-only messages.");
+        try {
+          const textOnly = messages.map(({ image, ...rest }) => rest);
+          const session: ChatSession & { _v: number } = {
+            id: _cachedSessionId ?? generateId(),
+            messages: textOnly as Message[],
+            createdAt: _cachedCreatedAt ?? Date.now(),
+            updatedAt: Date.now(),
+            _v: STORAGE_VERSION,
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+        } catch {
+          console.error("[HER store] Failed to save even text-only.");
+        }
+      } else {
+        console.error("[HER store] Failed to save:", error);
+      }
+    }
+  };
+
+  if (immediate) {
+    if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+    doSave();
+  } else {
+    if (_saveTimer) clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(doSave, SAVE_DEBOUNCE_MS);
   }
-}
-
-/**
- * Save a chat session to localStorage (legacy — kept for compat)
- */
-export function saveSession(session: ChatSession): void {
-  if (typeof window === "undefined") return;
-
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...session, _v: STORAGE_VERSION }));
-  } catch (error) {
-    console.error("[HER store] Failed to save:", error);
-  }
-}
-
-/**
- * Create a new empty chat session
- */
-export function createSession(): ChatSession {
-  const now = Date.now();
-  return {
-    id: generateId(),
-    messages: [],
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
-/**
- * Add a message to the session and persist
- */
-export function addMessage(
-  session: ChatSession,
-  role: Message["role"],
-  content: string
-): ChatSession {
-  const message: Message = {
-    id: generateId(),
-    role,
-    content,
-    timestamp: Date.now(),
-  };
-
-  const updated: ChatSession = {
-    ...session,
-    messages: [...session.messages, message],
-    updatedAt: Date.now(),
-  };
-
-  saveSession(updated);
-  return updated;
 }
 
 /**
@@ -156,6 +161,8 @@ export function addMessage(
  */
 export function clearSession(): void {
   if (typeof window === "undefined") return;
+  _cachedSessionId = null;
+  _cachedCreatedAt = null;
 
   try {
     localStorage.removeItem(STORAGE_KEY);

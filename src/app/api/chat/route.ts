@@ -75,10 +75,11 @@ export async function POST(req: NextRequest) {
       mode: body.mode || "default",
       continuityContext: body.continuityContext,
       rapportLevel: body.rapportLevel,
+      memoryContext: body.memoryContext,
     });
 
     console.log(
-      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, rapport: ${body.rapportLevel ?? 0}, stream: ${wantsStream})`
+      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, rapport: ${body.rapportLevel ?? 0}, memory: ${body.memoryContext ? "yes" : "no"}, stream: ${wantsStream})`
     );
 
     // ── Streaming path ──
@@ -86,15 +87,23 @@ export async function POST(req: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           const encoder = new TextEncoder();
+          let chunksEmitted = 0;
           try {
             for await (const chunk of generateStreamReply(payload)) {
               controller.enqueue(encoder.encode(chunk));
+              chunksEmitted++;
             }
             controller.close();
           } catch (err) {
             const msg = err instanceof Error ? err.message : "Stream failed";
             console.error("[HER API] Stream error:", msg);
-            controller.error(err);
+            // If no chunks were emitted, close cleanly so the client gets a proper error
+            // If chunks were already sent, error the stream to signal failure
+            if (chunksEmitted === 0) {
+              controller.close();
+            } else {
+              controller.error(err);
+            }
           }
         },
       });

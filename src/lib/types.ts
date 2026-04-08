@@ -1,5 +1,12 @@
 // ── App Message (used in UI & localStorage) ───────────────
 
+/** Lightweight reference to a quoted/replied-to message */
+export interface ReplyRef {
+  id: string;
+  content: string;
+  role: "user" | "assistant";
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
@@ -9,6 +16,10 @@ export interface Message {
   image?: string;
   /** True while an image is being generated for this message */
   imageLoading?: boolean;
+  /** If this message is a reply, a lightweight reference to the quoted message */
+  replyTo?: ReplyRef;
+  /** Emoji reactions — maps emoji to array of who reacted ("user" | "her") */
+  reactions?: Record<string, string[]>;
 }
 
 // ── Model Message (sent to the LLM API) ────────────────────
@@ -57,6 +68,8 @@ export interface ChatRequest {
   mode?: ConversationMode;
   /** Rapport level (0–4) for progressive bonding */
   rapportLevel?: number;
+  /** Cross-conversation memory context (fetched client-side) */
+  memoryContext?: string;
   /** Compact continuity context for anti-repetition (computed client-side) */
   continuityContext?: string;
 }

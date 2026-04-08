@@ -222,6 +222,27 @@ input[type="text"] {
   animation: fadeIn 0.35s ease-out forwards;
 }
 
+/* Reply highlight — warm flash when scrolling to a quoted message */
+@keyframes replyHighlight {
+  0% { background-color: rgba(201, 110, 90, 0.12); }
+  100% { background-color: transparent; }
+}
+
+.reply-highlight > div {
+  animation: replyHighlight 1.2s ease-out forwards;
+  border-radius: 20px;
+}
+
+/* Emoji reaction tray — pops in with a subtle scale+fade */
+@keyframes emojiTrayIn {
+  0% { opacity: 0; transform: scale(0.85) translateY(4px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.animate-emoji-tray {
+  animation: emojiTrayIn 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 .animate-message-in {
   animation: messageSlideIn 0.4s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
 }
@@ -479,4 +500,36 @@ input[type="text"] {
   height: 4px;
   border-radius: 999px;
   background: rgba(221, 208, 194, 0.4);
+}
+
+/* ── Reduced Motion ──────────────────────────────────────── */
+/* Respect users who prefer reduced motion (vestibular disorders, etc.) */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Ensure breathing/presence dots are still visible but static */
+  .animate-breathe,
+  .animate-presence-breathe,
+  .animate-soft-pulse {
+    opacity: 0.7 !important;
+    transform: none !important;
+  }
+
+  /* Keep stream cursor visible but stop blinking */
+  .animate-stream-cursor {
+    opacity: 0.6 !important;
+  }
+
+  /* Keep shimmer visible but static */
+  .animate-image-shimmer {
+    background: var(--color-her-surface-light) !important;
+  }
 }

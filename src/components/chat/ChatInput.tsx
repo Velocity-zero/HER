@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, KeyboardEvent, ChangeEvent } from "react";
+import type { ReplyRef } from "@/lib/types";
+import { isTouchDevice } from "@/lib/utils";
 
 /**
  * ChatInput — Premium warm conversational composer.
  * Pill-shaped, luxurious feel. Like whispering into warm space.
  * Supports Enter to send (desktop), Shift+Enter for newline.
  * Supports single image attachment with preview.
+ * Supports replying to messages with a quote preview bar.
  */
 
 /** Max image size: 4 MB — keeps localStorage and data URLs reasonable */
@@ -26,15 +29,10 @@ interface ChatInputProps {
   onToggleStudio?: () => void;
   /** Whether the Image Studio is currently open */
   studioOpen?: boolean;
-}
-
-/**
- * Detect touch-primary devices (phones/tablets with virtual keyboards).
- * Uses coarse pointer detection — reliable, no user-agent sniffing.
- */
-function isTouchDevice(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(pointer: coarse)").matches;
+  /** The message being replied to (shows quote bar above input) */
+  replyingTo?: ReplyRef | null;
+  /** Called to dismiss the reply quote */
+  onCancelReply?: () => void;
 }
 
 /** Read a File as a base64 data URL. */
@@ -47,7 +45,7 @@ function readFileAsDataURL(file: File): Promise<string> {
   });
 }
 
-export default function ChatInput({ onSend, disabled = false, prefillText, onPrefillConsumed, onToggleStudio, studioOpen }: ChatInputProps) {
+export default function ChatInput({ onSend, disabled = false, prefillText, onPrefillConsumed, onToggleStudio, studioOpen, replyingTo, onCancelReply }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -158,6 +156,33 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
     <div className="shrink-0 bg-gradient-to-t from-her-bg via-her-bg to-her-bg/80 pb-3 pt-2.5 sm:pb-5 sm:pt-3">
       <div className="mx-auto max-w-[640px] px-3 pb-[env(safe-area-inset-bottom)] sm:px-5 md:px-6">
 
+        {/* Reply quote bar — appears when replying to a message */}
+        {replyingTo && (
+          <div className="animate-fade-in mb-2 flex items-center gap-2 rounded-[14px] border border-her-border/15 bg-her-surface/40 px-3 py-2 shadow-[0_1px_3px_rgba(180,140,110,0.04)]">
+            <div className={`h-full w-[2.5px] shrink-0 self-stretch rounded-full ${
+              replyingTo.role === "user" ? "bg-her-accent/40" : "bg-her-text-muted/25"
+            }`} />
+            <div className="min-w-0 flex-1">
+              <span className="block text-[10px] font-medium tracking-[0.06em] text-her-text-muted/45">
+                replying to {replyingTo.role === "user" ? "yourself" : "her"}
+              </span>
+              <span className="block truncate text-[11px] leading-[1.45] text-her-text-muted/55 sm:text-[12px]">
+                {replyingTo.content.length > 80 ? replyingTo.content.slice(0, 80).trimEnd() + "…" : replyingTo.content}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onCancelReply}
+              aria-label="Cancel reply"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-her-text-muted/30 transition-colors duration-200 hover:bg-her-text/[0.06] hover:text-her-text-muted/50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+                <path d="M5.28 4.22a.75.75 0 00-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 101.06 1.06L8 9.06l2.72 2.72a.75.75 0 101.06-1.06L9.06 8l2.72-2.72a.75.75 0 00-1.06-1.06L8 6.94 5.28 4.22z" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         {/* Image preview — appears above the input row */}
         {image && (
           <div className="animate-fade-in mb-2.5 flex items-start gap-2">
@@ -183,7 +208,7 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
 
         {/* Image error toast */}
         {imageError && (
-          <div className="animate-fade-in mb-2">
+          <div className="animate-fade-in mb-2" role="alert" aria-live="assertive">
             <p className="text-[11px] font-light text-her-accent/70 sm:text-[12px]">{imageError}</p>
           </div>
         )}

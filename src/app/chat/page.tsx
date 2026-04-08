@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import { Message } from "@/lib/types";
 import { generateId, loadSession, saveMessages, clearSession } from "@/lib/chat-store";
 import { createSurfaceCopyBundle, GREETING_POOL, type SurfaceCopyBundle } from "@/lib/surface-copy";
 import { buildContinuity, buildContinuityBlock } from "@/lib/continuity";
+import { humanDelay } from "@/lib/utils";
 import {
   initPersistence,
   getEffectiveUserId,
   getOrCreateConversation,
   saveMessageToSupabase,
+  saveReactionToSupabase,
   touchConversation,
   clearActiveConversationId,
   setActiveConversationId,
@@ -56,6 +58,10 @@ function dbMessageToUiMessage(dbMsg: DbMessage): Message {
     content: dbMsg.content,
     timestamp: new Date(dbMsg.created_at).getTime(),
     ...(dbMsg.image_url ? { image: dbMsg.image_url } : {}),
+    ...(dbMsg.reply_to_id && dbMsg.reply_to_content && dbMsg.reply_to_role
+      ? { replyTo: { id: dbMsg.reply_to_id, content: dbMsg.reply_to_content, role: dbMsg.reply_to_role } }
+      : {}),
+    ...(dbMsg.reactions ? { reactions: dbMsg.reactions } : {}),
   };
 }
 
@@ -107,6 +113,100 @@ function extractImagePrompt(text: string): string {
   if (prompt.length < 5) prompt = text.trim();
 
   return prompt;
+}
+
+// ── Static microcopy pools (module-level — never recreated) ──
+const LOCAL_VISION = ["okay let me see…", "looking…"];
+const LOCAL_IMAGE_CAPTIONS = ["here you go", "okay how's this"];
+const LOCAL_IMAGE_FAIL = [
+  "that didn't work — try again?",
+  "image generation broke — give it another shot?",
+];
+const LOCAL_VISION_FAIL = [
+  "couldn't read that image — try another one?",
+  "got nothing from that — try again?",
+];
+
+function pickRandom(pool: string[]): string {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// ── Friendly error mapper for Image Studio (module-level — never recreated) ──
+
+function mapStudioError(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (lower.includes("api key") || lower.includes("envkey") || lower.includes("configure") || lower.includes("missing") || lower.includes("unauthorized")) {
+    return "she can't create right now \u2014 the image service key isn't working.";
+  }
+  if (lower.includes("rate limit") || lower.includes("429") || lower.includes("too many")) {
+    return "too many requests \u2014 give it about 30 seconds and try again.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("gateway") || lower.includes("abort")) {
+    return "that took too long. try again in a moment.";
+  }
+  if (lower.includes("(422)") || lower.includes("rejected the request") || lower.includes("payload")) {
+    return "those settings didn't quite work. try adjusting the prompt or switching to Recommended.";
+  }
+  if (lower.includes("unavailable") || lower.includes("overload") || lower.includes("503") || lower.includes("502") || lower.includes("unsupported model") || lower.includes("not be supported")) {
+    return "the image service is taking a break. try once more, or switch to Recommended for the most reliable results.";
+  }
+  if (lower.includes("unexpected response")) {
+    return "the image came back in a format she didn't recognize. try once more, or Recommended tends to be the most reliable.";
+  }
+  if (lower.includes("image") && (lower.includes("invalid") || lower.includes("read") || lower.includes("decode") || lower.includes("unsupported"))) {
+    return "she couldn't read that image clearly. try a different one.";
+  }
+  // Fallback \u2014 include a hint of the real error for debugging
+  console.warn("[HER Studio] Unmapped error:", raw);
+  return "something went wrong. try once more, or switch to Recommended for the most reliable results.";
+}
+
+/**
+ * Fire-and-forget: persist assistant message + touch conversation + refresh list.
+ * Extracted to avoid repeating the same 3-call pattern in every send branch.
+ */
+async function persistAssistantMessage(
+  convoId: string | null,
+  userId: string,
+  content: string,
+  clientMessageId: string,
+  imageUrl: string | undefined,
+  refreshConversations: () => Promise<void>,
+): Promise<void> {
+  if (!convoId) return;
+  saveMessageToSupabase({
+    conversationId: convoId,
+    userId,
+    role: "assistant",
+    content,
+    imageUrl,
+    clientMessageId,
+  }).catch(() => {});
+  touchConversation(convoId).catch(() => {});
+  refreshConversations().catch(() => {});
+}
+
+/**
+ * Smart session title: update conversation title from the first real user message.
+ * Extracted to avoid duplicating the same logic in handleSend and handleStudioGenerate.
+ */
+async function maybeUpdateTitle(
+  convoId: string,
+  updatedMessages: Message[],
+  userContent: string,
+  setConversations: Dispatch<SetStateAction<ConversationSummary[]>>,
+): Promise<void> {
+  const userMsgCount = updatedMessages.filter((m) => m.role === "user").length;
+  if (userMsgCount !== 1) return;
+  const raw = userContent.trim();
+  if (!raw || raw === "(shared a photo)") return;
+  const title = raw.length > 50 ? raw.slice(0, 50).trimEnd() + "\u2026" : raw;
+  const ok = await updateConversationTitle(convoId, title).catch(() => false);
+  if (ok) {
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convoId ? { ...c, title } : c))
+    );
+  }
 }
 
 export default function ChatPage() {
@@ -164,9 +264,50 @@ export default function ChatPage() {
   // ── Retry state — stores the last failed user message for retry ──
   const [retryContent, setRetryContent] = useState<{ content: string; image?: string } | null>(null);
 
+  // ── Reply/quote state — the message being replied to ──
+  const [replyingTo, setReplyingTo] = useState<Message["replyTo"] | null>(null);
+
   // ── Rapport system — progressive bonding ──
   const [rapportLevel, setRapportLevel] = useState<RapportLevel>(0);
   const rapportStatsRef = useRef({ totalConversations: 0, totalUserMessages: 0 });
+
+  // ── Cross-conversation memory ──
+  const [memoryContext, setMemoryContext] = useState<string | null>(null);
+
+  /**
+   * Fire-and-forget: extract memories from a set of messages and refresh context.
+   * Uses a ref-stable function so it can be called from any callback without
+   * stale closures or declaration-order issues.
+   */
+  const extractMemoryRef = useRef<(msgs: Message[]) => void>(() => {});
+  extractMemoryRef.current = (msgs: Message[]) => {
+    const userMsgs = msgs.filter((m) => m.role === "user");
+    if (userMsgs.length < 3) return;
+
+    getEffectiveUserId().then((userId) => {
+      const payload = msgs
+        .filter((m) => m.id !== "greeting")
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      fetch("/api/memory/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, messages: payload }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.extracted > 0) {
+            console.log(`[HER] Extracted ${data.extracted} memories`);
+            // Refresh memory context for future messages in this session
+            fetch(`/api/memory?userId=${encodeURIComponent(userId)}`)
+              .then((r) => r.json())
+              .then((d) => { if (d.memoryContext) setMemoryContext(d.memoryContext); })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }).catch(() => {});
+  };
 
   // Fetch rapport stats once on mount (fire-and-forget)
   useEffect(() => {
@@ -192,7 +333,40 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Restore from localStorage (client-only, after hydration) ──
+  // Fetch cross-conversation memory on mount (+ auto-backfill if needed)
+  useEffect(() => {
+    getEffectiveUserId().then((userId) => {
+      fetch(`/api/memory?userId=${encodeURIComponent(userId)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.memoryContext) {
+            setMemoryContext(data.memoryContext);
+            console.log("[HER] Memory loaded:", data.memoryContext.slice(0, 100));
+          } else if (rapportStatsRef.current.totalConversations >= 2) {
+            // User has past conversations but no memories — run backfill once
+            console.log("[HER] No memories found but user has past conversations — running backfill...");
+            fetch("/api/memory/backfill", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ userId }),
+            })
+              .then((r) => r.json())
+              .then((result) => {
+                console.log("[HER] Backfill complete:", result);
+                if (result.extracted > 0) {
+                  // Re-fetch memory context now that backfill is done
+                  fetch(`/api/memory?userId=${encodeURIComponent(userId)}`)
+                    .then((r2) => r2.json())
+                    .then((d) => { if (d.memoryContext) setMemoryContext(d.memoryContext); })
+                    .catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }).catch(() => {});
+  }, []);
   useEffect(() => {
     const saved = loadSession();
     if (saved && saved.messages.length > 0) {
@@ -237,19 +411,40 @@ export default function ChatPage() {
 
   // ── Persist whenever messages change (skip the first server render) ──
   // Filter out in-flight placeholders (imageLoading) so they never leak to storage
+  // Debounced by default (300ms) — immediate on final states
   useEffect(() => {
     if (!hydrated) return;
     const persistable = messages.filter((m) => !m.imageLoading);
-    saveMessages(persistable);
-  }, [messages, hydrated]);
+    saveMessages(persistable, !isStreaming);
+  }, [messages, hydrated, isStreaming]);
+
+  // Stable ref for current messages — avoids stale closures without adding `messages` to deps
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // Stable ref for surfaceCopy greeting — used by loadConversationMessages without adding to deps
+  const surfaceCopyRef = useRef(surfaceCopy);
+  surfaceCopyRef.current = surfaceCopy;
+
+  // ── Abort cleanup on unmount — cancel any in-flight requests when navigating away ──
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
+  }, []);
 
   // ── Load messages for a specific conversation ──
   const loadConversationMessages = useCallback(async (conversationId: string) => {
+    // Extract memories from the conversation we're leaving (fire-and-forget)
+    extractMemoryRef.current(messagesRef.current);
+
     // Cancel any in-flight request from the previous conversation
     abortRef.current?.abort();
     abortRef.current = null;
 
     setLoadingConvo(true);
+    sendingRef.current = false;
     const dbMessages = await getConversationMessages(conversationId);
 
     if (dbMessages.length > 0) {
@@ -257,7 +452,7 @@ export default function ChatPage() {
       setMessages(uiMessages);
     } else {
       // Conversation exists but has no messages — show greeting
-      setMessages([createGreeting(surfaceCopy.greeting)]);
+      setMessages([createGreeting(surfaceCopyRef.current.greeting)]);
     }
 
     setActiveConvoId(conversationId);
@@ -269,10 +464,11 @@ export default function ChatPage() {
     setLastRevisedPrompt(null);
     setStudioError(null);
     setRetryContent(null);
+    setReplyingTo(null);
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
     setError(null);
-  }, []);
+  }, []); // no deps — reads messages via messagesRef to avoid stale closures
 
   // ── Select a conversation from history ──
   const handleSelectConversation = useCallback(
@@ -291,26 +487,18 @@ export default function ChatPage() {
     setConversations(convos);
   }, [isAuthenticated, user?.id]);
 
-  // ── Local microcopy pools (no API calls — instant, zero latency) ──
-  const LOCAL_VISION = ["okay let me see…", "looking…"];
-  const LOCAL_IMAGE = [surfaceCopy.imageGeneratingLabel, "working on it…"];
-  const LOCAL_IMAGE_CAPTIONS = ["here you go", "okay how's this"];
-  const LOCAL_IMAGE_FAIL = [
-    "that didn't work — try again?",
-    "image generation broke — give it another shot?",
-  ];
-  const LOCAL_VISION_FAIL = [
-    "couldn't read that image — try another one?",
-    "got nothing from that — try again?",
-  ];
-
-  const pickRandom = (pool: string[]) => pool[Math.floor(Math.random() * pool.length)];
+  // Pool that depends on session surface copy — memoized
+  const LOCAL_IMAGE = useMemo(
+    () => [surfaceCopy.imageGeneratingLabel, "working on it…"],
+    [surfaceCopy.imageGeneratingLabel]
+  );
 
   // ── Send a message (with streaming response) ──
   const handleSend = useCallback(async (content: string, image?: string) => {
     if (sendingRef.current) return;
     sendingRef.current = true;
     setError(null);
+    setRetryContent(null);
 
     // Cancel any previous in-flight request
     abortRef.current?.abort();
@@ -324,7 +512,12 @@ export default function ChatPage() {
       content: content || (image ? "(shared a photo)" : ""),
       timestamp: Date.now(),
       ...(image ? { image } : {}),
+      ...(replyingTo ? { replyTo: { ...replyingTo } } : {}),
     };
+
+    // Clear the reply state immediately so it doesn't linger
+    const currentReply = replyingTo;
+    setReplyingTo(null);
 
     // Use functional updater to avoid stale closure over `messages`
     let updatedMessages: Message[] = [];
@@ -347,20 +540,7 @@ export default function ChatPage() {
       }
     } else {
       // ── Smart session title: update title from first real user message ──
-      const userMsgCount = updatedMessages.filter((m) => m.role === "user").length;
-      if (userMsgCount === 1) {
-        const raw = userMessage.content.trim();
-        if (raw && raw !== "(shared a photo)") {
-          const title = raw.length > 50 ? raw.slice(0, 50).trimEnd() + "\u2026" : raw;
-          updateConversationTitle(convoId, title).then((ok) => {
-            if (ok) {
-              setConversations((prev) =>
-                prev.map((c) => (c.id === convoId ? { ...c, title } : c))
-              );
-            }
-          }).catch(() => {});
-        }
-      }
+      maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
     }
 
     if (convoId) {
@@ -370,15 +550,17 @@ export default function ChatPage() {
         role: "user",
         content: userMessage.content,
         imageUrl: image || undefined,
+        clientMessageId: userMessage.id,
+        ...(currentReply ? {
+          replyToId: currentReply.id,
+          replyToContent: currentReply.content,
+          replyToRole: currentReply.role,
+        } : {}),
       }).catch(() => {});
     }
 
     // Create a stable ID for the streaming assistant message
     const herMessageId = generateId();
-
-    // ── Human pacing — brief pause so responses don't feel instant ──
-    const humanDelay = () =>
-      new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
 
     // ── Vision analysis branch (user uploaded an image) ──
     if (image) {
@@ -429,16 +611,7 @@ export default function ChatPage() {
         setScrollTrigger((n) => n + 1);
 
         // ── Persist assistant vision response to Supabase ──
-        if (convoId) {
-          saveMessageToSupabase({
-            conversationId: convoId,
-            userId,
-            role: "assistant",
-            content: data.message,
-          }).catch(() => {});
-          touchConversation(convoId).catch(() => {});
-          refreshConversations().catch(() => {});
-        }
+        persistAssistantMessage(convoId, userId, data.message, herMessageId, undefined, refreshConversations);
       } catch (err) {
         // Silently ignore aborted requests (user switched conversation)
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -508,17 +681,7 @@ export default function ChatPage() {
         setScrollTrigger((n) => n + 1);
 
         // ── Persist assistant image message to Supabase ──
-        if (convoId) {
-          saveMessageToSupabase({
-            conversationId: convoId,
-            userId,
-            role: "assistant",
-            content: captionText,
-            imageUrl: data.image,
-          }).catch(() => {});
-          touchConversation(convoId).catch(() => {});
-          refreshConversations().catch(() => {});
-        }
+        persistAssistantMessage(convoId, userId, captionText, herMessageId, data.image, refreshConversations);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           return;
@@ -549,17 +712,39 @@ export default function ChatPage() {
     });
     setRapportLevel(currentRapport);
 
+    // ── Inject reply context into messages for the LLM ──
+    // If the latest user message is a reply, prepend the quoted text so HER knows the context.
+    const apiMessages = updatedMessages.map((m) => {
+      if (m.replyTo && m.role === "user") {
+        const quotedLabel = m.replyTo.role === "user" ? "the user" : "HER";
+        const quotedSnippet = m.replyTo.content.length > 120
+          ? m.replyTo.content.slice(0, 120).trimEnd() + "…"
+          : m.replyTo.content;
+        return {
+          ...m,
+          content: `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${m.content}`,
+        };
+      }
+      return m;
+    });
+
     try {
       const res = await fetch("/api/chat?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: updatedMessages, mode: conversationMode, rapportLevel: currentRapport, continuityContext }),
+        body: JSON.stringify({
+          messages: apiMessages,
+          mode: conversationMode,
+          rapportLevel: currentRapport,
+          memoryContext: memoryContext ?? undefined,
+          continuityContext,
+        }),
         signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
         // Non-streaming error (e.g. 400, 429, 502)
-        const errorText = await res.text();
+        const errorText = await res.text().catch(() => "");
         throw new Error(errorText || "Failed to get a response");
       }
 
@@ -619,17 +804,12 @@ export default function ChatPage() {
       setRetryContent(null);
 
       // ── Persist FINAL assistant message to Supabase (fire-and-forget) ──
-      if (convoId) {
-        saveMessageToSupabase({
-          conversationId: convoId,
-          userId,
-          role: "assistant",
-          content: fullText,
-        }).catch(() => {});
-        touchConversation(convoId).catch(() => {});
+      persistAssistantMessage(convoId, userId, fullText, herMessageId, undefined, refreshConversations);
 
-        // Refresh conversation list for authenticated users
-        refreshConversations().catch(() => {});
+      // ── Periodic memory extraction (every ~10 user messages) ──
+      const totalUserMsgs = updatedMessages.filter((m) => m.role === "user").length;
+      if (totalUserMsgs > 0 && totalUserMsgs % 5 === 0) {
+        extractMemoryRef.current(updatedMessages);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -649,22 +829,69 @@ export default function ChatPage() {
       sendingRef.current = false;
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [activeConvoId, refreshConversations, conversationMode]);
+  }, [activeConvoId, refreshConversations, conversationMode, memoryContext, replyingTo]);
+
   const handleRetry = useCallback(() => {
-    if (!retryContent) return;
+    if (!retryContent || sendingRef.current) return;
+    const { content, image } = retryContent;
     setError(null);
     setRetryContent(null);
     // Remove the last user message (we'll re-send it)
     setMessages((prev) => {
-      // Find last user message and remove it
       const lastUserIdx = [...prev].reverse().findIndex((m) => m.role === "user");
       if (lastUserIdx === -1) return prev;
       const idx = prev.length - 1 - lastUserIdx;
       return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
     });
-    // Re-send
-    handleSend(retryContent.content, retryContent.image);
+    // Re-send on next microtask so setMessages has flushed
+    queueMicrotask(() => handleSend(content, image));
   }, [retryContent, handleSend]);
+
+  // ── Reply handler — sets the quote context for the next message ──
+  const handleReply = useCallback((msg: Message) => {
+    setReplyingTo({
+      id: msg.id,
+      content: msg.content,
+      role: msg.role,
+    });
+  }, []);
+
+  const cancelReply = useCallback(() => {
+    setReplyingTo(null);
+  }, []);
+
+  // ── Reaction handler — toggle emoji on a message ──
+  const handleReaction = useCallback((messageId: string, emoji: string, reactor: "user" | "her") => {
+    setMessages((prev) => {
+      const updated = prev.map((m) => {
+        if (m.id !== messageId) return m;
+        const reactions = { ...(m.reactions || {}) };
+        const reactors = reactions[emoji] ? [...reactions[emoji]] : [];
+        const idx = reactors.indexOf(reactor);
+        if (idx >= 0) {
+          // Toggle off
+          reactors.splice(idx, 1);
+          if (reactors.length === 0) {
+            delete reactions[emoji];
+          } else {
+            reactions[emoji] = reactors;
+          }
+        } else {
+          // Toggle on
+          reactions[emoji] = [...reactors, reactor];
+        }
+        return { ...m, reactions: Object.keys(reactions).length > 0 ? reactions : undefined };
+      });
+
+      // Persist to Supabase (fire-and-forget)
+      const msg = updated.find((m) => m.id === messageId);
+      if (msg) {
+        saveReactionToSupabase(messageId, msg.reactions || {}).catch(() => {});
+      }
+
+      return updated;
+    });
+  }, []);
 
   // ── Friendly error mapper for Image Studio ──
   function mapStudioError(raw: string): string {
@@ -750,20 +977,7 @@ export default function ChatPage() {
         setActiveConversationId(convoId);
       }
     } else {
-      const userMsgCount = updatedMessages.filter((m) => m.role === "user").length;
-      if (userMsgCount === 1) {
-        const raw = userMessage.content.trim();
-        if (raw && raw !== "(shared a photo)") {
-          const title = raw.length > 50 ? raw.slice(0, 50).trimEnd() + "\u2026" : raw;
-          updateConversationTitle(convoId, title).then((ok) => {
-            if (ok) {
-              setConversations((prev) =>
-                prev.map((c) => (c.id === convoId ? { ...c, title } : c))
-              );
-            }
-          }).catch(() => {});
-        }
-      }
+      maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
     }
 
     if (convoId) {
@@ -773,13 +987,11 @@ export default function ChatPage() {
         role: "user",
         content: userMessage.content,
         imageUrl: request.mode === "edit" ? request.image : undefined,
+        clientMessageId: userMessage.id,
       }).catch(() => {});
     }
 
     const herMessageId = generateId();
-
-    const humanDelay = () =>
-      new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
 
     try {
       setIsTyping(false);
@@ -843,17 +1055,7 @@ export default function ChatPage() {
       );
       setScrollTrigger((n) => n + 1);
 
-      if (convoId) {
-        saveMessageToSupabase({
-          conversationId: convoId,
-          userId,
-          role: "assistant",
-          content: captionText,
-          imageUrl: data.image,
-        }).catch(() => {});
-        touchConversation(convoId).catch(() => {});
-        refreshConversations().catch(() => {});
-      }
+      persistAssistantMessage(convoId, userId, captionText, herMessageId, data.image, refreshConversations);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       const raw = err instanceof Error ? err.message : "something went wrong";
@@ -872,6 +1074,9 @@ export default function ChatPage() {
 
   // ── New chat / start over ──
   const handleClear = useCallback(() => {
+    // Extract memories from the conversation we're leaving (fire-and-forget)
+    extractMemoryRef.current(messagesRef.current);
+
     abortRef.current?.abort();
     abortRef.current = null;
     clearSession();
@@ -890,6 +1095,7 @@ export default function ChatPage() {
     setLastRevisedPrompt(null);
     setStudioError(null);
     setRetryContent(null);
+    setReplyingTo(null);
     setConversationMode("default");
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
@@ -931,7 +1137,7 @@ export default function ChatPage() {
       }
       return success;
     },
-    [activeConvoId]
+    [activeConvoId, rapportLevel]
   );
 
   const dismissError = useCallback(() => setError(null), []);
@@ -967,11 +1173,19 @@ export default function ChatPage() {
     setStudioOpen(true);
   }, []);
 
+  // ── Stable callback refs for JSX (avoid inline arrow re-creation) ──
+  const openHistory = useCallback(() => setHistoryOpen(true), []);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  const closeStudio = useCallback(() => setStudioOpen(false), []);
+  const toggleStudio = useCallback(() => setStudioOpen((v) => !v), []);
+  const consumePrefill = useCallback(() => setPrefillText(null), []);
+  const clearStudioError = useCallback(() => setStudioError(null), []);
+
   return (
     <div className="animate-page-enter flex h-full flex-col overflow-hidden bg-her-bg">
       <ChatHeader
         onClear={handleClear}
-        onHistoryOpen={() => setHistoryOpen(true)}
+        onHistoryOpen={openHistory}
       />
 
       {/* Conversation mode selector — auto-hides after a few seconds */}
@@ -984,7 +1198,7 @@ export default function ChatPage() {
       {/* History drawer */}
       <HistoryDrawer
         open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
+        onClose={closeHistory}
         conversations={conversations}
         activeConversationId={activeConvoId}
         onSelectConversation={handleSelectConversation}
@@ -997,9 +1211,10 @@ export default function ChatPage() {
 
       {/* Loading overlay for conversation switch */}
       {loadingConvo && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-her-bg/70 backdrop-blur-[2px]">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-her-bg/70 backdrop-blur-[2px]" role="status" aria-live="polite">
           <div className="flex flex-col items-center gap-3">
             <div className="animate-presence-breathe h-2 w-2 rounded-full bg-her-accent/40" />
+            <span className="sr-only">Loading conversation</span>
           </div>
         </div>
       )}
@@ -1053,6 +1268,8 @@ export default function ChatPage() {
                 isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
                 imageActions={msgImageActions}
                 thinkingLabel={surfaceCopy.thinkingLabel}
+                onReply={handleReply}
+                onReaction={handleReaction}
               />
             );
           })}
@@ -1063,9 +1280,10 @@ export default function ChatPage() {
 
         {/* Error toast */}
         {error && (
-          <div className="animate-fade-in mb-5 flex flex-col items-center gap-2 px-3 sm:px-0">
+          <div role="alert" aria-live="assertive" className="animate-fade-in mb-5 flex flex-col items-center gap-2 px-3 sm:px-0">
             <button
               onClick={dismissError}
+              aria-label="Dismiss error"
               className="min-h-[44px] rounded-[18px] bg-her-accent/[0.05] px-5 py-3 text-[12px] leading-[1.5] text-her-accent/70 shadow-[0_1px_4px_rgba(180,140,110,0.04)] transition-colors duration-300 hover:bg-her-accent/[0.09] sm:px-6 sm:text-[13px]"
             >
               {error}
@@ -1074,6 +1292,7 @@ export default function ChatPage() {
             {retryContent && (
               <button
                 onClick={handleRetry}
+                aria-label="Retry sending message"
                 className="rounded-full border border-her-accent/15 px-4 py-1.5 text-[11px] tracking-[0.04em] text-her-accent/55 transition-all duration-200 hover:bg-her-accent/[0.06] hover:text-her-accent/75 active:scale-[0.96]"
               >
                 try again
@@ -1090,15 +1309,15 @@ export default function ChatPage() {
             key={studioKey}
             onGenerate={handleStudioGenerate}
             disabled={isTyping || isStreaming}
-            onClose={() => setStudioOpen(false)}
+            onClose={closeStudio}
             lastRevisedPrompt={lastRevisedPrompt}
             studioError={studioError}
             initialPrefill={studioPrefill}
             generatingLabel={surfaceCopy.imageGeneratingLabel}
             editingLabel={surfaceCopy.imageEditingLabel}
             promptPlaceholder={surfaceCopy.studioPlaceholder}
-            onRetry={() => setStudioError(null)}
-            onSwitchRecommended={() => setStudioError(null)}
+            onRetry={clearStudioError}
+            onSwitchRecommended={clearStudioError}
           />
         </div>
       )}
@@ -1107,9 +1326,11 @@ export default function ChatPage() {
         onSend={handleSend}
         disabled={isTyping || isStreaming}
         prefillText={prefillText ?? undefined}
-        onPrefillConsumed={() => setPrefillText(null)}
-        onToggleStudio={() => setStudioOpen((v) => !v)}
+        onPrefillConsumed={consumePrefill}
+        onToggleStudio={toggleStudio}
         studioOpen={studioOpen}
+        replyingTo={replyingTo}
+        onCancelReply={cancelReply}
       />
     </div>
   );

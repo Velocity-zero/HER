@@ -132,7 +132,12 @@ export default function AuthModal({ open, onClose }: AuthModalProps) {
       />
 
       {/* Modal */}
-      <div className="animate-fade-in relative w-full max-w-[340px] rounded-2xl bg-her-bg px-6 py-7 shadow-lg sm:max-w-[380px] sm:px-8 sm:py-9">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={step === "email" ? "Sign in" : "Check your email"}
+        className="animate-fade-in relative w-full max-w-[340px] rounded-2xl bg-her-bg px-6 py-7 shadow-lg sm:max-w-[380px] sm:px-8 sm:py-9"
+      >
         {/* Close button */}
         <button
           onClick={onClose}

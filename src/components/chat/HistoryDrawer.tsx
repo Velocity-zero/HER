@@ -104,12 +104,60 @@ export default function HistoryDrawer({
 
   const renameRef = useRef<HTMLInputElement>(null);
 
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
   // Focus rename input when entering rename mode
   useEffect(() => {
     if (renamingId) {
       setTimeout(() => renameRef.current?.focus(), 50);
     }
   }, [renamingId]);
+
+  // Focus trap + Escape key handler + restore focus on close
+  useEffect(() => {
+    if (open) {
+      // Store the previously focused element to restore later
+      previousFocusRef.current = document.activeElement as HTMLElement | null;
+      // Focus the drawer after transition
+      setTimeout(() => drawerRef.current?.focus(), 100);
+    } else {
+      // Restore focus when drawer closes
+      setTimeout(() => previousFocusRef.current?.focus(), 310);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      // Focus trap — Tab cycles within the drawer
+      if (e.key === "Tab" && drawerRef.current) {
+        const focusable = drawerRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
 
   // Reset interaction state when drawer closes
   useEffect(() => {
@@ -280,6 +328,7 @@ export default function HistoryDrawer({
         <button
           onClick={() => handleSelect(convo.id)}
           className="min-w-0 flex-1 px-3.5 py-3 text-left"
+          aria-label={`Open conversation: ${convo.title || "untitled"}`}
         >
           <p className="truncate text-[12px] leading-snug tracking-[0.02em]">
             {convo.title || "untitled"}
@@ -352,12 +401,16 @@ export default function HistoryDrawer({
           setMenuOpenId(null);
           onClose();
         }}
+        aria-hidden="true"
       />
 
       {/* Drawer panel */}
       <div
+        ref={drawerRef}
         role="dialog"
+        aria-modal="true"
         aria-label="Chat history"
+        tabIndex={-1}
         className={`history-drawer fixed inset-y-0 left-0 z-50 flex w-[280px] max-w-[80vw] flex-col border-r border-her-border/20 bg-her-bg shadow-lg transition-transform duration-300 ease-out sm:w-[300px] ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
@@ -392,6 +445,7 @@ export default function HistoryDrawer({
           <div className="px-5 pb-3 sm:px-6">
             <button
               onClick={handleNewChat}
+              aria-label="Start a new chat"
               className="flex w-full items-center gap-2 rounded-xl border border-her-border/25 bg-her-surface/20 px-3.5 py-2.5 text-[11px] tracking-[0.06em] text-her-text-muted/45 transition-all duration-300 hover:border-her-accent/20 hover:bg-her-accent/[0.04] hover:text-her-text-muted/65 active:scale-[0.98]"
             >
               <svg

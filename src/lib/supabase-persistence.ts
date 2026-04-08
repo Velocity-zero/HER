@@ -175,24 +175,36 @@ export async function saveMessageToSupabase(params: {
   role: "user" | "assistant";
   content: string;
   imageUrl?: string;
-}): Promise<void> {
+  replyToId?: string;
+  replyToContent?: string;
+  replyToRole?: "user" | "assistant";
+  /** Client-generated message ID — stored so reactions can find the row later */
+  clientMessageId?: string;
+}): Promise<string | null> {
   const client = getSupabaseClient();
-  if (!client) return;
+  if (!client) return null;
 
   try {
-    const { error } = await client.from("messages").insert({
+    const { data, error } = await client.from("messages").insert({
       conversation_id: params.conversationId,
       user_id: params.userId,
       role: params.role,
       content: params.content,
       image_url: params.imageUrl || null,
-    });
+      reply_to_id: params.replyToId || null,
+      reply_to_content: params.replyToContent || null,
+      reply_to_role: params.replyToRole || null,
+      client_message_id: params.clientMessageId || null,
+    }).select("id").single();
 
     if (error) {
       console.warn(`[HER DB] Save ${params.role} message failed:`, error.message);
+      return null;
     }
+    return data?.id ?? null;
   } catch (err) {
     console.warn(`[HER DB] Save ${params.role} message exception:`, err);
+    return null;
   }
 }
 
@@ -214,6 +226,33 @@ export async function touchConversation(conversationId: string): Promise<void> {
     }
   } catch (err) {
     console.warn("[HER DB] Touch conversation exception:", err);
+  }
+}
+
+/**
+ * Save emoji reactions on a message.
+ * Matches by client_message_id since the UI uses client-generated IDs.
+ * Replaces the entire reactions JSONB object.
+ * Non-blocking — failures are logged silently.
+ */
+export async function saveReactionToSupabase(
+  clientMessageId: string,
+  reactions: Record<string, string[]>
+): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+
+  try {
+    const { error } = await client
+      .from("messages")
+      .update({ reactions })
+      .eq("client_message_id", clientMessageId);
+
+    if (error) {
+      console.warn("[HER DB] Save reaction failed:", error.message);
+    }
+  } catch (err) {
+    console.warn("[HER DB] Save reaction exception:", err);
   }
 }
 
@@ -263,6 +302,14 @@ export interface DbMessage {
   content: string;
   created_at: string;
   image_url: string | null;
+  /** ID of the message being replied to (nullable) */
+  reply_to_id: string | null;
+  /** Snapshot of the quoted message content (nullable) */
+  reply_to_content: string | null;
+  /** Role of the quoted message sender (nullable) */
+  reply_to_role: "user" | "assistant" | null;
+  /** Emoji reactions as JSONB (nullable) */
+  reactions: Record<string, string[]> | null;
 }
 
 /**
@@ -278,7 +325,7 @@ export async function getConversationMessages(
   try {
     const { data, error } = await client
       .from("messages")
-      .select("id, role, content, created_at, image_url")
+      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 

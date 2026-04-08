@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 
 /**
  * ChatWindow — Scrollable conversation container.
@@ -20,7 +20,7 @@ export default function ChatWindow({ children, autoScroll = true, scrollTrigger 
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const scrollToBottom = useCallback(() => {
     if (!autoScroll || !containerRef.current || !bottomRef.current) return;
 
     const el = containerRef.current;
@@ -29,12 +29,17 @@ export default function ChatWindow({ children, autoScroll = true, scrollTrigger 
     if (isNearBottom) {
       bottomRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
-  }, [children, autoScroll, scrollTrigger]);
+  }, [autoScroll]);
+
+  // Scroll when scrollTrigger changes (streaming) — this is the primary driver
+  useEffect(() => {
+    scrollToBottom();
+  }, [scrollTrigger, scrollToBottom]);
 
   return (
     <div
       ref={containerRef}
-      className="chat-scroll flex min-h-0 flex-1 flex-col overflow-y-auto"
+      className="chat-scroll flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto"
     >
       {/* Push messages toward the bottom — atmospheric empty space above */}
       <div className="flex-1" />

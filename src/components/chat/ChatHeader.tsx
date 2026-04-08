@@ -73,6 +73,7 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
               onClick={onHistoryOpen}
               className="flex min-h-[44px] items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] tracking-[0.08em] text-her-text-muted/35 transition-colors duration-300 hover:text-her-text-muted/60"
               title="Chat history"
+              aria-label="Open chat history"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -108,6 +109,7 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
                 onClick={signOut}
                 className="min-h-[44px] rounded-full px-2.5 py-1 text-[10px] tracking-[0.08em] text-her-accent/50 transition-colors duration-300 hover:text-her-accent/80"
                 title={user?.email || "Signed in"}
+                aria-label={`Sign out ${userLabel || ""}`}
               >
                 {userLabel}
               </button>
@@ -115,6 +117,7 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
               <button
                 onClick={() => setAuthOpen(true)}
                 className="min-h-[44px] rounded-full px-2.5 py-1 text-[10px] tracking-[0.08em] text-her-text-muted/30 transition-colors duration-300 hover:text-her-text-muted/55"
+                aria-label="Sign in"
               >
                 sign in
               </button>
@@ -125,6 +128,7 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
           {onClear ? (
             <button
               onClick={handleClearClick}
+              aria-label={confirming ? "Confirm clear conversation" : isAuthenticated ? "Start a new chat" : "Start over"}
               className={`
                 min-h-[44px] rounded-full px-3 py-1 text-[10px] tracking-[0.1em]
                 transition-all duration-300 ease-out active:scale-[0.96]
