@@ -53,13 +53,14 @@ async function nvidiaProvider(messages: ModelMessage[]): Promise<string> {
     body: JSON.stringify({
       model: NVIDIA_CHAT_MODEL,
       messages: toNvidiaMessages(messages),
-      max_tokens: 256,
+      max_tokens: 512,
       temperature: 0.75,
       top_p: 0.9,
       frequency_penalty: 0.3,
       presence_penalty: 0.15,
       stream: false,
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {
@@ -93,13 +94,14 @@ async function* nvidiaStreamProvider(
     body: JSON.stringify({
       model: NVIDIA_CHAT_MODEL,
       messages: toNvidiaMessages(messages),
-      max_tokens: 256,
+      max_tokens: 512,
       temperature: 0.75,
       top_p: 0.9,
       frequency_penalty: 0.3,
       presence_penalty: 0.15,
       stream: true,
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) {

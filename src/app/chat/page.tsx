@@ -5,7 +5,7 @@ import { Message } from "@/lib/types";
 import { generateId, loadSession, saveMessages, clearSession } from "@/lib/chat-store";
 import { createSurfaceCopyBundle, GREETING_POOL, type SurfaceCopyBundle } from "@/lib/surface-copy";
 import { buildContinuity, buildContinuityBlock } from "@/lib/continuity";
-import { humanDelay } from "@/lib/utils";
+import { humanDelay, authFetch } from "@/lib/utils";
 import {
   initPersistence,
   getEffectiveUserId,
@@ -131,36 +131,6 @@ function pickRandom(pool: string[]): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// ── Friendly error mapper for Image Studio (module-level — never recreated) ──
-
-function mapStudioError(raw: string): string {
-  const lower = raw.toLowerCase();
-  if (lower.includes("api key") || lower.includes("envkey") || lower.includes("configure") || lower.includes("missing") || lower.includes("unauthorized")) {
-    return "she can't create right now \u2014 the image service key isn't working.";
-  }
-  if (lower.includes("rate limit") || lower.includes("429") || lower.includes("too many")) {
-    return "too many requests \u2014 give it about 30 seconds and try again.";
-  }
-  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("gateway") || lower.includes("abort")) {
-    return "that took too long. try again in a moment.";
-  }
-  if (lower.includes("(422)") || lower.includes("rejected the request") || lower.includes("payload")) {
-    return "those settings didn't quite work. try adjusting the prompt or switching to Recommended.";
-  }
-  if (lower.includes("unavailable") || lower.includes("overload") || lower.includes("503") || lower.includes("502") || lower.includes("unsupported model") || lower.includes("not be supported")) {
-    return "the image service is taking a break. try once more, or switch to Recommended for the most reliable results.";
-  }
-  if (lower.includes("unexpected response")) {
-    return "the image came back in a format she didn't recognize. try once more, or Recommended tends to be the most reliable.";
-  }
-  if (lower.includes("image") && (lower.includes("invalid") || lower.includes("read") || lower.includes("decode") || lower.includes("unsupported"))) {
-    return "she couldn't read that image clearly. try a different one.";
-  }
-  // Fallback \u2014 include a hint of the real error for debugging
-  console.warn("[HER Studio] Unmapped error:", raw);
-  return "something went wrong. try once more, or switch to Recommended for the most reliable results.";
-}
-
 /**
  * Fire-and-forget: persist assistant message + touch conversation + refresh list.
  * Extracted to avoid repeating the same 3-call pattern in every send branch.
@@ -209,8 +179,53 @@ async function maybeUpdateTitle(
   }
 }
 
+/**
+ * HER auto-react: After responding, HER may spontaneously react to the user's
+ * most recent message with an emoji. Fires ~30% of the time to keep it natural.
+ *
+ * Uses a dedicated lightweight endpoint (/api/chat/react) with minimal tokens.
+ */
+async function maybeHerReact(
+  recentUserMessage: Message,
+  herReplyText: string,
+  handleReaction: (messageId: string, emoji: string, reactor: "user" | "her") => void,
+  accessToken?: string | null,
+): Promise<void> {
+  // Roll the dice — only ~30% of the time
+  if (Math.random() > 0.3) return;
+
+  // Don't react to very short messages (greetings, "ok", etc.)
+  if (recentUserMessage.content.trim().length < 8) return;
+
+  try {
+    const res = await authFetch("/api/chat/react", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userMessage: recentUserMessage.content,
+        herReply: herReplyText,
+      }),
+    }, accessToken);
+
+    if (!res.ok) return;
+
+    const { emoji } = await res.json();
+    if (emoji) {
+      // Small delay so the reaction appears after the message, feeling natural
+      await new Promise((r) => setTimeout(r, 800 + Math.random() * 1200));
+      handleReaction(recentUserMessage.id, emoji, "her");
+    }
+  } catch {
+    // Silently fail — reactions are non-critical
+  }
+}
+
 export default function ChatPage() {
-  const { user, isAuthenticated, loading: authLoading } = useAuth();
+  const { user, session, isAuthenticated, loading: authLoading } = useAuth();
+
+  // Ref-stable access token for module-level helpers (maybeHerReact, etc.)
+  const accessTokenRef = useRef<string | null>(null);
+  accessTokenRef.current = session?.access_token ?? null;
 
   // ── Surface copy bundle (session-stable, regenerates on New Chat) ──
   const [surfaceCopy, setSurfaceCopy] = useState<SurfaceCopyBundle>(() => createSurfaceCopyBundle());
@@ -244,6 +259,8 @@ export default function ChatPage() {
 
   // Scroll trigger — increments during streaming to keep auto-scroll working
   const [scrollTrigger, setScrollTrigger] = useState(0);
+  // Force-scroll trigger — unconditional scroll on new messages (user send, HER reply)
+  const [forceScrollTrigger, setForceScrollTrigger] = useState(0);
 
   // ── Image Studio state ──
   const [studioOpen, setStudioOpen] = useState(false);
@@ -289,17 +306,17 @@ export default function ChatPage() {
         .filter((m) => m.id !== "greeting")
         .map((m) => ({ role: m.role, content: m.content }));
 
-      fetch("/api/memory/extract", {
+      authFetch("/api/memory/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, messages: payload }),
-      })
+      }, accessTokenRef.current)
         .then((res) => res.json())
         .then((data) => {
           if (data.extracted > 0) {
             console.log(`[HER] Extracted ${data.extracted} memories`);
             // Refresh memory context for future messages in this session
-            fetch(`/api/memory?userId=${encodeURIComponent(userId)}`)
+            authFetch(`/api/memory?userId=${encodeURIComponent(userId)}`, {}, accessTokenRef.current)
               .then((r) => r.json())
               .then((d) => { if (d.memoryContext) setMemoryContext(d.memoryContext); })
               .catch(() => {});
@@ -308,6 +325,12 @@ export default function ChatPage() {
         .catch(() => {});
     }).catch(() => {});
   };
+
+  /**
+   * Ref-stable wrapper for handleReaction so module-level helpers
+   * (maybeHerReact) can call it without stale closures.
+   */
+  const handleReactionRef = useRef<(messageId: string, emoji: string, reactor: "user" | "her") => void>(() => {});
 
   // Fetch rapport stats once on mount (fire-and-forget)
   useEffect(() => {
@@ -336,7 +359,7 @@ export default function ChatPage() {
   // Fetch cross-conversation memory on mount (+ auto-backfill if needed)
   useEffect(() => {
     getEffectiveUserId().then((userId) => {
-      fetch(`/api/memory?userId=${encodeURIComponent(userId)}`)
+      authFetch(`/api/memory?userId=${encodeURIComponent(userId)}`, {}, accessTokenRef.current)
         .then((res) => res.json())
         .then((data) => {
           if (data.memoryContext) {
@@ -345,17 +368,17 @@ export default function ChatPage() {
           } else if (rapportStatsRef.current.totalConversations >= 2) {
             // User has past conversations but no memories — run backfill once
             console.log("[HER] No memories found but user has past conversations — running backfill...");
-            fetch("/api/memory/backfill", {
+            authFetch("/api/memory/backfill", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ userId }),
-            })
+            }, accessTokenRef.current)
               .then((r) => r.json())
               .then((result) => {
                 console.log("[HER] Backfill complete:", result);
                 if (result.extracted > 0) {
                   // Re-fetch memory context now that backfill is done
-                  fetch(`/api/memory?userId=${encodeURIComponent(userId)}`)
+                  authFetch(`/api/memory?userId=${encodeURIComponent(userId)}`, {}, accessTokenRef.current)
                     .then((r2) => r2.json())
                     .then((d) => { if (d.memoryContext) setMemoryContext(d.memoryContext); })
                     .catch(() => {});
@@ -467,6 +490,7 @@ export default function ChatPage() {
     setReplyingTo(null);
     sendingRef.current = false;
     setSessionKey((k) => k + 1);
+    setForceScrollTrigger((n) => n + 1);
     setError(null);
   }, []); // no deps — reads messages via messagesRef to avoid stale closures
 
@@ -526,6 +550,8 @@ export default function ChatPage() {
       return updatedMessages;
     });
     setIsTyping(true);
+    // Force-scroll to show the user's new message immediately
+    setForceScrollTrigger((n) => n + 1);
 
     // ── Persist user message to Supabase (fire-and-forget) ──
     const userId = await getEffectiveUserId();
@@ -578,16 +604,16 @@ export default function ChatPage() {
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, herPlaceholder]);
-        setScrollTrigger((n) => n + 1);
+        setForceScrollTrigger((n) => n + 1);
 
         await humanDelay();
 
-        const res = await fetch("/api/vision", {
+        const res = await authFetch("/api/vision", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image, prompt: visionPrompt }),
           signal: controller.signal,
-        });
+        }, accessTokenRef.current);
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ error: "Failed to analyze image" }));
@@ -608,7 +634,7 @@ export default function ChatPage() {
               : m
           )
         );
-        setScrollTrigger((n) => n + 1);
+        setForceScrollTrigger((n) => n + 1);
 
         // ── Persist assistant vision response to Supabase ──
         persistAssistantMessage(convoId, userId, data.message, herMessageId, undefined, refreshConversations);
@@ -646,16 +672,16 @@ export default function ChatPage() {
           imageLoading: true,
         };
         setMessages((prev) => [...prev, herPlaceholder]);
-        setScrollTrigger((n) => n + 1);
+        setForceScrollTrigger((n) => n + 1);
 
         await humanDelay();
 
-        const res = await fetch("/api/imagine", {
+        const res = await authFetch("/api/imagine", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ prompt: imagePrompt }),
           signal: controller.signal,
-        });
+        }, accessTokenRef.current);
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({ error: "Failed to generate image" }));
@@ -678,7 +704,7 @@ export default function ChatPage() {
               : m
           )
         );
-        setScrollTrigger((n) => n + 1);
+        setForceScrollTrigger((n) => n + 1);
 
         // ── Persist assistant image message to Supabase ──
         persistAssistantMessage(convoId, userId, captionText, herMessageId, data.image, refreshConversations);
@@ -712,24 +738,40 @@ export default function ChatPage() {
     });
     setRapportLevel(currentRapport);
 
-    // ── Inject reply context into messages for the LLM ──
+    // ── Inject reply context + reaction annotations into messages for the LLM ──
+    // If a message has reactions, append a compact annotation so HER is aware.
     // If the latest user message is a reply, prepend the quoted text so HER knows the context.
     const apiMessages = updatedMessages.map((m) => {
+      let content = m.content;
+
+      // Prepend reply context for user messages that are replies
       if (m.replyTo && m.role === "user") {
         const quotedLabel = m.replyTo.role === "user" ? "the user" : "HER";
         const quotedSnippet = m.replyTo.content.length > 120
           ? m.replyTo.content.slice(0, 120).trimEnd() + "…"
           : m.replyTo.content;
-        return {
-          ...m,
-          content: `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${m.content}`,
-        };
+        content = `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${content}`;
       }
-      return m;
+
+      // Append reaction annotations (only user reactions are relevant for LLM awareness)
+      if (m.reactions && Object.keys(m.reactions).length > 0) {
+        const reactionParts: string[] = [];
+        for (const [emoji, reactors] of Object.entries(m.reactions)) {
+          if (reactors.includes("user")) {
+            reactionParts.push(emoji);
+          }
+        }
+        if (reactionParts.length > 0) {
+          const who = m.role === "assistant" ? "user reacted to this" : "user self-reacted";
+          content += `\n[${who}: ${reactionParts.join(" ")}]`;
+        }
+      }
+
+      return content !== m.content ? { ...m, content } : m;
     });
 
     try {
-      const res = await fetch("/api/chat?stream=true", {
+      const res = await authFetch("/api/chat?stream=true", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -740,7 +782,7 @@ export default function ChatPage() {
           continuityContext,
         }),
         signal: controller.signal,
-      });
+      }, accessTokenRef.current);
 
       if (!res.ok || !res.body) {
         // Non-streaming error (e.g. 400, 429, 502)
@@ -760,6 +802,7 @@ export default function ChatPage() {
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, herPlaceholder]);
+      setForceScrollTrigger((n) => n + 1);
 
       await humanDelay();
 
@@ -805,6 +848,9 @@ export default function ChatPage() {
 
       // ── Persist FINAL assistant message to Supabase (fire-and-forget) ──
       persistAssistantMessage(convoId, userId, fullText, herMessageId, undefined, refreshConversations);
+
+      // ── HER auto-react: maybe react to the user's message with an emoji ──
+      maybeHerReact(userMessage, fullText, handleReactionRef.current, accessTokenRef.current);
 
       // ── Periodic memory extraction (every ~10 user messages) ──
       const totalUserMsgs = updatedMessages.filter((m) => m.role === "user").length;
@@ -892,6 +938,9 @@ export default function ChatPage() {
       return updated;
     });
   }, []);
+
+  // Keep the ref in sync so module-level helpers can call it
+  handleReactionRef.current = handleReaction;
 
   // ── Friendly error mapper for Image Studio ──
   function mapStudioError(raw: string): string {
@@ -1005,11 +1054,11 @@ export default function ChatPage() {
         imageLoading: true,
       };
       setMessages((prev) => [...prev, herPlaceholder]);
-      setScrollTrigger((n) => n + 1);
+      setForceScrollTrigger((n) => n + 1);
 
       await humanDelay();
 
-      const res = await fetch("/api/imagine", {
+      const res = await authFetch("/api/imagine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1024,7 +1073,7 @@ export default function ChatPage() {
           image: request.image,
         }),
         signal: controller.signal,
-      });
+      }, accessTokenRef.current);
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: "Failed to generate image" }));
@@ -1053,7 +1102,7 @@ export default function ChatPage() {
             : m
         )
       );
-      setScrollTrigger((n) => n + 1);
+      setForceScrollTrigger((n) => n + 1);
 
       persistAssistantMessage(convoId, userId, captionText, herMessageId, data.image, refreshConversations);
     } catch (err) {
@@ -1219,7 +1268,7 @@ export default function ChatPage() {
         </div>
       )}
 
-      <ChatWindow scrollTrigger={scrollTrigger}>
+      <ChatWindow scrollTrigger={scrollTrigger} forceScrollTrigger={forceScrollTrigger}>
         <div key={sessionKey} className="animate-session-fade">
           {/* Empty state — shown when conversation only has the greeting */}
           {!isTyping && messages.length === 1 && messages[0].id === "greeting" && (

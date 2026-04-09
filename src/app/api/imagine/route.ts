@@ -10,6 +10,7 @@ import {
   DEFAULT_EDIT_MODEL_ID,
   type ImageModelDef,
 } from "@/lib/image-models";
+import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -60,6 +61,13 @@ function normalizeBase64Image(raw: string | undefined | null): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Auth check ──
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
+    const sizeError = checkBodySize(req);
+    if (sizeError) return sizeError;
+
     const body = (await req.json()) as ImageGenerationRequest;
 
     // ── Validate prompt ──

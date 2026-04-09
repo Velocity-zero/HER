@@ -14,10 +14,17 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { extractMemories, saveMemoryEntries } from "@/lib/memory";
-import { getCurrentUser } from "@/lib/auth";
+import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Auth check ──
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
+    const sizeError = checkBodySize(req);
+    if (sizeError) return sizeError;
+
     const body = await req.json();
     const { userId, messages } = body;
 
@@ -28,9 +35,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate: if user is authenticated, they can only extract for themselves
-    const authUser = await getCurrentUser();
-    if (authUser && authUser.id !== userId) {
+    // Authenticated users can only extract for themselves
+    if (auth.userId !== "guest" && auth.userId !== userId) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 403 }

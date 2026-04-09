@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ChatRequest, ChatResponse } from "@/lib/types";
 import { buildPayload } from "@/lib/conversation";
 import { generateReply, generateStreamReply } from "@/lib/provider";
+import { validateApiRequest, checkBodySize, MAX_MESSAGES_COUNT, MAX_MESSAGE_LENGTH } from "@/lib/api-auth";
 
 /**
  * POST /api/chat
@@ -46,6 +47,14 @@ function classifyError(errorMessage: string): { userError: string; status: numbe
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Auth check ──
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
+    // ── Body size check ──
+    const sizeError = checkBodySize(req);
+    if (sizeError) return sizeError;
+
     const body: ChatRequest = await req.json();
     const wantsStream = req.nextUrl.searchParams.get("stream") === "true";
 
@@ -68,6 +77,16 @@ export async function POST(req: NextRequest) {
         { message: "", error: "No messages provided" } as ChatResponse,
         { status: 400 }
       );
+    }
+
+    // Enforce limits: max message count + truncate long content
+    if (body.messages.length > MAX_MESSAGES_COUNT) {
+      body.messages = body.messages.slice(-MAX_MESSAGES_COUNT);
+    }
+    for (const msg of body.messages) {
+      if (msg.content && msg.content.length > MAX_MESSAGE_LENGTH) {
+        msg.content = msg.content.slice(0, MAX_MESSAGE_LENGTH);
+      }
     }
 
     // Build the full model payload

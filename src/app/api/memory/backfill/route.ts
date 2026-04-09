@@ -15,10 +15,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { extractMemories, saveMemoryEntries } from "@/lib/memory";
-import { getCurrentUser } from "@/lib/auth";
+import { validateApiRequest } from "@/lib/api-auth";
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Auth check ──
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
     const body = await req.json();
     const { userId } = body;
 
@@ -26,9 +30,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing userId" }, { status: 400 });
     }
 
-    // Validate: if user is authenticated, they can only backfill for themselves
-    const authUser = await getCurrentUser();
-    if (authUser && authUser.id !== userId) {
+    // Authenticated users can only backfill for themselves
+    if (auth.userId !== "guest" && auth.userId !== userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 

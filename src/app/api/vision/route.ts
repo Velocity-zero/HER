@@ -6,6 +6,7 @@ import {
   generateDynamicVisionFallback,
   generateSoftError,
 } from "@/lib/multimodal";
+import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
 
 /**
  * POST /api/vision
@@ -29,6 +30,13 @@ const MAX_PAYLOAD_SIZE = 10 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
+    // ── Auth check ──
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
+    const sizeError = checkBodySize(req);
+    if (sizeError) return sizeError;
+
     const body = await req.json();
     const { image, prompt } = body as { image?: string; prompt?: string };
 

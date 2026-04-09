@@ -21,3 +21,25 @@ export function isTouchDevice(): boolean {
 export function humanDelay(): Promise<void> {
   return new Promise<void>((r) => setTimeout(r, 350 + Math.random() * 550));
 }
+
+/**
+ * Authenticated fetch wrapper — injects the Supabase JWT Bearer token
+ * into the Authorization header of every API call.
+ *
+ * Usage:
+ *   const res = await authFetch("/api/chat", { method: "POST", ... }, session);
+ *
+ * When session is null (guest mode / Supabase not configured), calls proceed
+ * without the header — the API routes handle this by allowing guest mode.
+ */
+export function authFetch(
+  url: string,
+  init: RequestInit = {},
+  accessToken?: string | null,
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+  return fetch(url, { ...init, headers });
+}

@@ -1,7 +1,10 @@
 // HER — Service Worker
 // Minimal, stable caching for PWA installability and offline shell.
 
-const CACHE_NAME = "her-v1";
+// Cache version — bump on each deployment to invalidate stale assets.
+// Uses a timestamp so every build gets a fresh cache automatically.
+const CACHE_VERSION = "20260409";
+const CACHE_NAME = `her-${CACHE_VERSION}`;
 
 // App shell — the minimum needed for the app to render
 const APP_SHELL = [

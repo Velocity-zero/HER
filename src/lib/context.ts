@@ -62,27 +62,6 @@ export function buildConversationSummary(
   _olderMessages: Message[]
 ): string | null {
   // TODO: Implement summarization
-  // This is the hook for long-term conversation memory.
-  // When ready, this function will:
-  //   - Detect when olderMessages.length > 0
-  //   - Summarize them (LLM call or heuristic)
-  //   - Return a concise emotional + factual summary
-  return null;
-}
-
-/**
- * Placeholder for long-term memory retrieval.
- *
- * In the future, this pulls stored facts/notes about the user
- * from a persistence layer (DB, vector store, etc.).
- *
- * For now returns null.
- */
-export function buildMemoryContext(): string | null {
-  // TODO: Implement memory retrieval
-  // Will eventually return things like:
-  //   "Their name is Alex. They love rainy days.
-  //    Last time you talked about a book called Piranesi."
   return null;
 }
 
@@ -128,8 +107,8 @@ export function buildContext(
     ? buildConversationSummary(olderMessages)
     : null;
 
-  // Build memory context
-  const memory = options.memoryContext ?? buildMemoryContext();
+  // Build memory context (supplied externally by the client via /api/memory)
+  const memory = options.memoryContext ?? null;
 
   // Assemble system prompt with all layers
   const systemContent = buildSystemPrompt({

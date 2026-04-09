@@ -275,7 +275,7 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
       className={`group/msg relative mb-5 flex flex-col sm:mb-6 ${
         isUser ? "animate-message-in items-end" : "animate-assistant-in items-start"
       }`}
-      style={{ animationDelay: `${Math.min(index * 30, 150)}ms`, animationFillMode: "backwards" }}
+      style={{ animationDelay: `${Math.min(index * 30, 150)}ms`, animationFillMode: "backwards", touchAction: "pan-y" }}
       onMouseEnter={revealReply}
       onMouseLeave={hideDesktopActions}
       onTouchStart={handleTouchStart}

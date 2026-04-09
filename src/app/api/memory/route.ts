@@ -11,10 +11,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getUserMemories, formatMemoryForPrompt } from "@/lib/memory";
-import { getCurrentUser } from "@/lib/auth";
+import { validateApiRequest } from "@/lib/api-auth";
 
 export async function GET(req: NextRequest) {
   try {
+    // ── Auth check ──
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
     const userId = req.nextUrl.searchParams.get("userId");
 
     if (!userId) {
@@ -24,9 +28,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Validate: if user is authenticated, they can only access their own memories
-    const authUser = await getCurrentUser();
-    if (authUser && authUser.id !== userId) {
+    // Authenticated users can only access their own memories
+    if (auth.userId !== "guest" && auth.userId !== userId) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 403 }

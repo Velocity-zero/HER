@@ -1,6 +1,7 @@
 {
   "name": "HER — Your AI Companion",
   "short_name": "HER",
+  "id": "/chat",
   "description": "An emotionally intelligent AI companion. Warm, intimate, and always here for you.",
   "start_url": "/chat",
   "scope": "/",
