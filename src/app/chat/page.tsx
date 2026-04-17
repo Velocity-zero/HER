@@ -738,37 +738,41 @@ export default function ChatPage() {
     });
     setRapportLevel(currentRapport);
 
-    // ── Inject reply context + reaction annotations into messages for the LLM ──
-    // If a message has reactions, append a compact annotation so HER is aware.
+    // ── Inject reply context into messages for the LLM ──
     // If the latest user message is a reply, prepend the quoted text so HER knows the context.
     const apiMessages = updatedMessages.map((m) => {
-      let content = m.content;
-
-      // Prepend reply context for user messages that are replies
       if (m.replyTo && m.role === "user") {
         const quotedLabel = m.replyTo.role === "user" ? "the user" : "HER";
         const quotedSnippet = m.replyTo.content.length > 120
           ? m.replyTo.content.slice(0, 120).trimEnd() + "…"
           : m.replyTo.content;
-        content = `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${content}`;
+        return {
+          ...m,
+          content: `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${m.content}`,
+        };
       }
-
-      // Append reaction annotations (only user reactions are relevant for LLM awareness)
-      if (m.reactions && Object.keys(m.reactions).length > 0) {
-        const reactionParts: string[] = [];
-        for (const [emoji, reactors] of Object.entries(m.reactions)) {
-          if (reactors.includes("user")) {
-            reactionParts.push(emoji);
-          }
-        }
-        if (reactionParts.length > 0) {
-          const who = m.role === "assistant" ? "user reacted to this" : "user self-reacted";
-          content += `\n[${who}: ${reactionParts.join(" ")}]`;
-        }
-      }
-
-      return content !== m.content ? { ...m, content } : m;
+      return m;
     });
+
+    // ── Build a compact reaction summary for the last few messages ──
+    // Passed as part of the request context, NOT baked into message content.
+    // This prevents the LLM from echoing "[user reacted to this: ❤️]" in its replies.
+    const recentReactions: string[] = [];
+    const recentSlice = updatedMessages.slice(-10);
+    for (const m of recentSlice) {
+      if (!m.reactions) continue;
+      const userEmojis = Object.entries(m.reactions)
+        .filter(([, reactors]) => reactors.includes("user"))
+        .map(([emoji]) => emoji);
+      if (userEmojis.length > 0) {
+        const label = m.role === "assistant" ? "your message" : "their own message";
+        const snippet = m.content.length > 30 ? m.content.slice(0, 30).trimEnd() + "…" : m.content;
+        recentReactions.push(`they reacted ${userEmojis.join("")} to ${label}: "${snippet}"`);
+      }
+    }
+    const reactionContext = recentReactions.length > 0
+      ? `Recent emoji reactions: ${recentReactions.join("; ")}`
+      : undefined;
 
     try {
       const res = await authFetch("/api/chat?stream=true", {
@@ -779,7 +783,7 @@ export default function ChatPage() {
           mode: conversationMode,
           rapportLevel: currentRapport,
           memoryContext: memoryContext ?? undefined,
-          continuityContext,
+          continuityContext: [continuityContext, reactionContext].filter(Boolean).join("\n") || undefined,
         }),
         signal: controller.signal,
       }, accessTokenRef.current);
