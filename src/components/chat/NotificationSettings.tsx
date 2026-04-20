@@ -141,23 +141,19 @@ export default function NotificationSettings({
         </div>
 
         {/* Main toggle */}
-        <div className="mb-5 flex items-center justify-between">
+        <div className="mb-5 flex items-center justify-between gap-4">
           <span className="text-[12px] text-her-text-muted/60">
             enable notifications
           </span>
           <button
             onClick={() => save({ notifications_enabled: !settings.notifications_enabled })}
-            className={`
-              relative h-6 w-11 rounded-full transition-colors duration-300
-              ${settings.notifications_enabled ? "bg-her-accent/60" : "bg-her-text-muted/20"}
-            `}
+            role="switch"
+            aria-checked={settings.notifications_enabled}
             aria-label="Toggle notifications"
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-300 ${settings.notifications_enabled ? "bg-her-accent/60" : "bg-her-text-muted/20"}`}
           >
             <span
-              className={`
-                absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-300
-                ${settings.notifications_enabled ? "translate-x-[22px]" : "translate-x-0.5"}
-              `}
+              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform duration-300 ease-out ${settings.notifications_enabled ? "translate-x-[1.375rem]" : "translate-x-0.5"}`}
             />
           </button>
         </div>
