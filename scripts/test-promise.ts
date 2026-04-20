@@ -1,5 +1,5 @@
 // Quick LLM smoke test for the promise detector
-import { detectTemporalIntent } from "./src/lib/temporal";
+import { detectTemporalIntent } from "../src/lib/temporal";
 
 const apiKey = process.env.NVIDIA_CHAT_API_KEY;
 if (!apiKey) {
