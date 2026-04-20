@@ -1,8 +1,12 @@
 /**
  * GET /api/cron/notify
  *
- * Background cron endpoint — called every ~1 minute.
- * Processes pending scheduled events that are due.
+ * Background cron endpoint — called every ~5 minutes by an external scheduler
+ * (e.g. cron-job.org). Processes pending scheduled events that are due.
+ *
+ * Cadence rationale: at 5 min, average delivery latency is ~2.5 min and worst
+ * case is ~5 min — invisible for day-scale reminders/follow-ups, while keeping
+ * Vercel function invocations ~80% lower than a 1-min schedule.
  *
  * For each due event:
  *   1. Check quiet hours → delay if needed
@@ -11,8 +15,8 @@
  *   4. Send push notification (if subscribed)
  *   5. Mark event as "sent"
  *
- * Secure this endpoint with a CRON_SECRET env var
- * or use Vercel Cron / external scheduler.
+ * Secure this endpoint with a CRON_SECRET env var (passed via Authorization
+ * header, x-cron-secret header, or ?secret= query param).
  */
 
 import { NextRequest, NextResponse } from "next/server";
