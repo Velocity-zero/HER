@@ -50,6 +50,10 @@ export interface ConversationConfig {
   continuityContext?: string;
   /** Rapport level (0–4) for progressive bonding */
   rapportLevel?: number;
+  /** Adaptive response mode instruction (Step 21) */
+  responseModeInstruction?: string;
+  /** Anti-repetition variation instruction (Step 21) */
+  antiRepetitionInstruction?: string;
 }
 
 // ── Session ────────────────────────────────────────────────
@@ -72,6 +76,10 @@ export interface ChatRequest {
   memoryContext?: string;
   /** Compact continuity context for anti-repetition (computed client-side) */
   continuityContext?: string;
+  /** Adaptive response mode instruction (Step 21) */
+  responseModeInstruction?: string;
+  /** Anti-repetition variation instruction (Step 21) */
+  antiRepetitionInstruction?: string;
 }
 
 export interface ChatResponse {

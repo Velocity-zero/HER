@@ -36,12 +36,52 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Push notifications: display notification when received from server
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  try {
+    const payload = event.data.json();
+    const title = payload.title || "HER";
+    const options = {
+      body: payload.body || "",
+      icon: "/icons/icon-192x192.png",
+      badge: "/icons/icon-72x72.png",
+      tag: "her-notification",
+      renotify: true,
+      data: payload.data || {},
+    };
+
+    event.waitUntil(self.registration.showNotification(title, options));
+  } catch (err) {
+    console.warn("[HER SW] Push parse error:", err);
+  }
+});
+
+// Notification click: open or focus the chat page
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const url = event.notification.data?.url || "/chat";
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      // If the app is already open, focus it
+      for (const client of clientList) {
+        if (client.url.includes("/chat") && "focus" in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open a new window
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
 // Fetch: network-first with cache fallback
 // This keeps content fresh while providing offline resilience.
 self.addEventListener("fetch", (event) => {
-  const { request } = event;
-
-  // Skip non-GET requests (POST to /api/chat, etc.)
+  const { request } = event; (POST to /api/chat, etc.)
   if (request.method !== "GET") return;
 
   // Skip API routes — always go to network

@@ -5,6 +5,9 @@ import { Message } from "@/lib/types";
 import { generateId, loadSession, saveMessages, clearSession } from "@/lib/chat-store";
 import { createSurfaceCopyBundle, GREETING_POOL, type SurfaceCopyBundle } from "@/lib/surface-copy";
 import { buildContinuity, buildContinuityBlock } from "@/lib/continuity";
+import { analyzeInteractionPattern, saveInteractionPattern } from "@/lib/interaction-patterns";
+import { selectResponseMode } from "@/lib/response-mode";
+import { checkRepetition } from "@/lib/anti-repetition-runtime";
 import { humanDelay, authFetch } from "@/lib/utils";
 import {
   initPersistence,
@@ -55,7 +58,7 @@ function dbMessageToUiMessage(dbMsg: DbMessage): Message {
   return {
     id: dbMsg.id,
     role: dbMsg.role,
-    content: dbMsg.content,
+    content: dbMsg.content.replace(/\s*\[user reacted to this: [^\]]*\]/g, ""),
     timestamp: new Date(dbMsg.created_at).getTime(),
     ...(dbMsg.image_url ? { image: dbMsg.image_url } : {}),
     ...(dbMsg.reply_to_id && dbMsg.reply_to_content && dbMsg.reply_to_role
@@ -301,6 +304,9 @@ export default function ChatPage() {
     const userMsgs = msgs.filter((m) => m.role === "user");
     if (userMsgs.length < 3) return;
 
+    // Build recent context for ranked memory retrieval
+    const recentCtxForMemory = msgs.slice(-4).map((m) => m.content).join(" ").slice(0, 300);
+
     getEffectiveUserId().then((userId) => {
       const payload = msgs
         .filter((m) => m.id !== "greeting")
@@ -315,8 +321,9 @@ export default function ChatPage() {
         .then((data) => {
           if (data.extracted > 0) {
             console.log(`[HER] Extracted ${data.extracted} memories`);
-            // Refresh memory context for future messages in this session
-            authFetch(`/api/memory?userId=${encodeURIComponent(userId)}`, {}, accessTokenRef.current)
+            // Refresh memory context with ranking based on recent conversation
+            const ctxParam = recentCtxForMemory ? `&context=${encodeURIComponent(recentCtxForMemory)}` : "";
+            authFetch(`/api/memory?userId=${encodeURIComponent(userId)}${ctxParam}`, {}, accessTokenRef.current)
               .then((r) => r.json())
               .then((d) => { if (d.memoryContext) setMemoryContext(d.memoryContext); })
               .catch(() => {});
@@ -741,17 +748,20 @@ export default function ChatPage() {
     // ── Inject reply context into messages for the LLM ──
     // If the latest user message is a reply, prepend the quoted text so HER knows the context.
     const apiMessages = updatedMessages.map((m) => {
-      if (m.replyTo && m.role === "user") {
-        const quotedLabel = m.replyTo.role === "user" ? "the user" : "HER";
-        const quotedSnippet = m.replyTo.content.length > 120
-          ? m.replyTo.content.slice(0, 120).trimEnd() + "…"
-          : m.replyTo.content;
+      // Strip any legacy reaction annotations from message content
+      const cleanContent = m.content.replace(/\s*\[user reacted to this: [^\]]*\]/g, "");
+      const cleaned = { ...m, content: cleanContent };
+      if (cleaned.replyTo && cleaned.role === "user") {
+        const quotedLabel = cleaned.replyTo.role === "user" ? "the user" : "HER";
+        const quotedSnippet = cleaned.replyTo.content.length > 120
+          ? cleaned.replyTo.content.slice(0, 120).trimEnd() + "…"
+          : cleaned.replyTo.content;
         return {
-          ...m,
-          content: `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${m.content}`,
+          ...cleaned,
+          content: `[replying to ${quotedLabel}: "${quotedSnippet}"]\n${cleaned.content}`,
         };
       }
-      return m;
+      return cleaned;
     });
 
     // ── Build a compact reaction summary for the last few messages ──
@@ -774,6 +784,48 @@ export default function ChatPage() {
       ? `Recent emoji reactions: ${recentReactions.join("; ")}`
       : undefined;
 
+    // ── Step 21: Adaptive Intelligence Layer (auth users only) ──
+    let responseModeInstruction: string | undefined;
+    let antiRepetitionInstruction: string | undefined;
+
+    if (isAuthenticated) {
+      // Part A: Analyze interaction patterns
+      const patterns = analyzeInteractionPattern(updatedMessages);
+
+      // Part B: Select response mode based on patterns + continuity
+      const continuityState = buildContinuity(updatedMessages);
+      const timeSinceLast = updatedMessages.length >= 2
+        ? Date.now() - updatedMessages[updatedMessages.length - 2].timestamp
+        : 0;
+      const modeResult = selectResponseMode({
+        continuity: continuityState,
+        patterns,
+        timeSinceLastMessage: timeSinceLast,
+        isAuthenticated: true,
+      });
+      if (modeResult.instruction) {
+        responseModeInstruction = modeResult.instruction;
+      }
+
+      // Part C: Anti-repetition runtime check
+      const recentAssistant = updatedMessages
+        .filter((m) => m.role === "assistant" && m.id !== "greeting")
+        .slice(-8)
+        .map((m) => m.content);
+      const repetitionCheck = checkRepetition(recentAssistant);
+      if (repetitionCheck.variationInstruction) {
+        antiRepetitionInstruction = repetitionCheck.variationInstruction;
+      }
+
+      // Part A (persist): save patterns every 10 messages (fire-and-forget)
+      const totalMsgs = updatedMessages.filter((m) => m.role === "user").length;
+      if (totalMsgs > 0 && totalMsgs % 10 === 0) {
+        getEffectiveUserId().then((uid) =>
+          saveInteractionPattern(uid, patterns).catch(() => {})
+        ).catch(() => {});
+      }
+    }
+
     try {
       const res = await authFetch("/api/chat?stream=true", {
         method: "POST",
@@ -784,6 +836,8 @@ export default function ChatPage() {
           rapportLevel: currentRapport,
           memoryContext: memoryContext ?? undefined,
           continuityContext: [continuityContext, reactionContext].filter(Boolean).join("\n") || undefined,
+          responseModeInstruction,
+          antiRepetitionInstruction,
         }),
         signal: controller.signal,
       }, accessTokenRef.current);
@@ -856,10 +910,45 @@ export default function ChatPage() {
       // ── HER auto-react: maybe react to the user's message with an emoji ──
       maybeHerReact(userMessage, fullText, handleReactionRef.current, accessTokenRef.current);
 
+      // ── Temporal intent detection (fire-and-forget, auth users only) ──
+      // Detects future events/tasks in the user's message and schedules follow-ups
+      // Also handles: predictive follow-ups, continuity learning, event resolution
+      // Guests get zero background cost — no scheduling, no LLM calls
+      if (isAuthenticated && accessTokenRef.current) {
+        // Build a brief recent context for predictive follow-up detection
+        const recentCtx = updatedMessages
+          .slice(-6)
+          .map((m) => `${m.role}: ${m.content.slice(0, 200)}`)
+          .join("\n");
+
+        authFetch("/api/temporal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: userMessage.content,
+            conversationId: convoId,
+            recentContext: recentCtx,
+          }),
+        }, accessTokenRef.current).catch(() => {});
+      }
+
       // ── Periodic memory extraction (every ~10 user messages) ──
       const totalUserMsgs = updatedMessages.filter((m) => m.role === "user").length;
       if (totalUserMsgs > 0 && totalUserMsgs % 5 === 0) {
         extractMemoryRef.current(updatedMessages);
+      }
+
+      // ── Memory feedback loop (Step 19 Part G, auth users only) ──
+      // Detects corrections, reinforcements, and emotional shifts in memories
+      if (isAuthenticated && accessTokenRef.current) {
+        authFetch("/api/memory/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userMessage: userMessage.content,
+            assistantMessage: fullText,
+          }),
+        }, accessTokenRef.current).catch(() => {});
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -1239,6 +1328,7 @@ export default function ChatPage() {
       <ChatHeader
         onClear={handleClear}
         onHistoryOpen={openHistory}
+        accessToken={accessTokenRef.current}
       />
 
       {/* Conversation mode selector — auto-hides after a few seconds */}

@@ -52,6 +52,8 @@ export function buildPayload(
     memoryContext: fullConfig.memoryContext,
     continuityContext: fullConfig.continuityContext,
     rapportLevel: fullConfig.rapportLevel,
+    responseModeInstruction: fullConfig.responseModeInstruction,
+    antiRepetitionInstruction: fullConfig.antiRepetitionInstruction,
   };
 
   return buildContext(messages, contextOptions);

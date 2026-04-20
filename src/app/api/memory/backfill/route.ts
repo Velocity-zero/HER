@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { extractMemories, saveMemoryEntries } from "@/lib/memory";
+import { backfillEmbeddings } from "@/lib/embeddings";
 import { validateApiRequest } from "@/lib/api-auth";
 
 export async function POST(req: NextRequest) {
@@ -105,11 +106,21 @@ export async function POST(req: NextRequest) {
 
     console.log(`[HER Backfill] Done! Processed: ${processed}, Extracted: ${totalExtracted}, Skipped: ${skipped}`);
 
+    // 3. Backfill embeddings for all memories without one
+    let embeddingsGenerated = 0;
+    try {
+      embeddingsGenerated = await backfillEmbeddings(userId, 100);
+      console.log(`[HER Backfill] Generated ${embeddingsGenerated} embeddings`);
+    } catch (err) {
+      console.warn("[HER Backfill] Embedding backfill failed:", err);
+    }
+
     return NextResponse.json({
       processed,
       extracted: totalExtracted,
       skipped,
       total: conversations.length,
+      embeddingsGenerated,
     });
   } catch (err) {
     console.error("[HER Backfill] Error:", err);

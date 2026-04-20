@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractMemories, saveMemoryEntries } from "@/lib/memory";
 import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
+import { storeMemoryEmbedding } from "@/lib/embeddings";
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,6 +53,27 @@ export async function POST(req: NextRequest) {
 
     // Save to Supabase
     await saveMemoryEntries(userId, entries);
+
+    // Generate embeddings for new memories (fire-and-forget, non-blocking)
+    // This runs in the background — we don't await all of them
+    const { getSupabaseClient } = await import("@/lib/supabase-client");
+    const client = getSupabaseClient();
+    if (client) {
+      // Fetch the most recently inserted memories to get their IDs
+      const { data: recent } = await client
+        .from("user_memories")
+        .select("id, fact")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(entries.length);
+
+      if (recent) {
+        // Fire-and-forget embedding generation
+        for (const row of recent) {
+          storeMemoryEmbedding(row.id, row.fact).catch(() => {});
+        }
+      }
+    }
 
     return NextResponse.json({ extracted: entries.length });
   } catch (err) {

@@ -95,10 +95,12 @@ export async function POST(req: NextRequest) {
       continuityContext: body.continuityContext,
       rapportLevel: body.rapportLevel,
       memoryContext: body.memoryContext,
+      responseModeInstruction: body.responseModeInstruction,
+      antiRepetitionInstruction: body.antiRepetitionInstruction,
     });
 
     console.log(
-      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, rapport: ${body.rapportLevel ?? 0}, memory: ${body.memoryContext ? "yes" : "no"}, stream: ${wantsStream})`
+      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, rapport: ${body.rapportLevel ?? 0}, memory: ${body.memoryContext ? "yes" : "no"}, adaptiveMode: ${body.responseModeInstruction ? "yes" : "no"}, stream: ${wantsStream})`
     );
 
     // ── Streaming path ──

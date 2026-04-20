@@ -77,6 +77,10 @@ export interface ContextOptions {
   continuityContext?: string;
   /** Rapport level (0–4) for progressive bonding */
   rapportLevel?: number;
+  /** Response mode instruction from adaptive intelligence (Step 21) */
+  responseModeInstruction?: string;
+  /** Anti-repetition variation instruction (Step 21 Part C) */
+  antiRepetitionInstruction?: string;
 }
 
 /**
@@ -116,7 +120,11 @@ export function buildContext(
     rapportLevel: (options.rapportLevel ?? 0) as import("./rapport").RapportLevel,
     conversationSummary: summary ?? undefined,
     memoryContext: memory ?? undefined,
-    continuityContext: options.continuityContext,
+    continuityContext: [
+      options.continuityContext,
+      options.responseModeInstruction,
+      options.antiRepetitionInstruction,
+    ].filter(Boolean).join("\n") || undefined,
   });
 
   const systemMessage: ModelMessage = {

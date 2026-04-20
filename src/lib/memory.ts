@@ -30,6 +30,9 @@ export interface MemoryEntry {
   category: MemoryCategory;
   created_at?: string;
   updated_at?: string;
+  confidence?: number;
+  emotion?: string | null;
+  intensity?: number | null;
 }
 
 export type MemoryCategory =
@@ -48,7 +51,7 @@ export type MemoryCategory =
  */
 export async function saveMemoryEntries(
   userId: string,
-  entries: { fact: string; category: MemoryCategory }[]
+  entries: { fact: string; category: MemoryCategory; confidence?: number }[]
 ): Promise<void> {
   const client = getSupabaseClient();
   if (!client || entries.length === 0) return;
@@ -57,17 +60,27 @@ export async function saveMemoryEntries(
     // Fetch existing memories to avoid duplicates
     const { data: existing } = await client
       .from("user_memories")
-      .select("fact")
+      .select("id, fact")
       .eq("user_id", userId);
 
-    const existingFacts = new Set(
-      (existing ?? []).map((e: { fact: string }) => e.fact.toLowerCase().trim())
-    );
+    const existingEntries = (existing ?? []) as { id: string; fact: string }[];
 
-    // Filter out entries that are too similar to existing ones
-    const newEntries = entries.filter(
-      (e) => !existingFacts.has(e.fact.toLowerCase().trim())
-    );
+    // Smart dedup: check for semantic similarity (word overlap), not just exact match
+    const newEntries = entries.filter((e) => {
+      const eLower = e.fact.toLowerCase().trim();
+      return !existingEntries.some((ex) => {
+        const exLower = ex.fact.toLowerCase().trim();
+        // Exact match
+        if (exLower === eLower) return true;
+        // High word overlap (>70% shared words = likely duplicate)
+        const eWords = new Set(eLower.split(/\s+/));
+        const exWords = new Set(exLower.split(/\s+/));
+        let overlap = 0;
+        for (const w of eWords) { if (exWords.has(w)) overlap++; }
+        const similarity = overlap / Math.max(eWords.size, exWords.size);
+        return similarity > 0.7;
+      });
+    });
 
     if (newEntries.length === 0) {
       console.log("[HER Memory] No new facts to store (all duplicates)");
@@ -78,6 +91,9 @@ export async function saveMemoryEntries(
       user_id: userId,
       fact: e.fact.trim(),
       category: e.category,
+      confidence: e.confidence ?? 0.8,
+      emotion: (e as { emotion?: string }).emotion ?? "neutral",
+      intensity: (e as { intensity?: number }).intensity ?? 0.2,
       updated_at: new Date().toISOString(),
     }));
 
@@ -106,7 +122,7 @@ export async function getUserMemories(
   try {
     const { data, error } = await client
       .from("user_memories")
-      .select("id, user_id, fact, category, created_at, updated_at")
+      .select("id, user_id, fact, category, created_at, updated_at, confidence, emotion, intensity")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false })
       .limit(50); // Cap to keep context window reasonable
@@ -187,12 +203,16 @@ Rules:
 - Do NOT extract generic conversation filler
 - Do NOT repeat or rephrase the same fact
 - If there's nothing meaningful to extract, return NONE
+- Rate each fact's confidence from 0.0 to 1.0 (how certain are you this is a real fact, not a joke or hypothetical?)
 
-Format your response as one fact per line, prefixed with the category:
-identity: their name is alex
-preference: they love lo-fi music and rainy days
-life: they have a corgi named biscuit
-context: they have a job interview next week
+Format your response as one fact per line, prefixed with category, confidence, emotion, and intensity:
+identity|0.95|neutral|0.1: their name is alex
+preference|0.8|happy|0.4: they love lo-fi music and rainy days
+life|0.9|neutral|0.2: they have a corgi named biscuit
+context|0.7|anxious|0.7: they have a job interview next week
+
+Emotion values: neutral, happy, excited, anxious, stressed, sad, angry, hurt, hopeful, nostalgic, frustrated, relieved
+Intensity: 0.0 (barely felt) to 1.0 (very strong)
 
 If nothing worth remembering: just write NONE`;
 
@@ -236,25 +256,51 @@ export async function extractMemories(
       "identity", "preference", "life", "emotional", "topic", "context",
     ]);
 
-    const entries: { fact: string; category: MemoryCategory }[] = [];
+    const entries: { fact: string; category: MemoryCategory; confidence: number; emotion: string; intensity: number }[] = [];
 
     for (const line of response.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
 
-      // Parse "category: fact" format
-      const colonIdx = trimmed.indexOf(":");
-      if (colonIdx === -1) continue;
+      // Parse "category|confidence|emotion|intensity: fact" or legacy formats
+      let cat: string;
+      let fact: string;
+      let confidence = 0.8;
+      let emotion = "neutral";
+      let intensity = 0.2;
 
-      const cat = trimmed.slice(0, colonIdx).trim().toLowerCase() as MemoryCategory;
-      const fact = trimmed.slice(colonIdx + 1).trim();
+      // Full format: category|0.95|anxious|0.7: fact
+      const fullMatch = trimmed.match(/^(\w+)\|(\d*\.?\d+)\|(\w+)\|(\d*\.?\d+):\s*(.+)/);
+      if (fullMatch) {
+        cat = fullMatch[1].toLowerCase();
+        confidence = parseFloat(fullMatch[2]);
+        emotion = fullMatch[3].toLowerCase();
+        intensity = parseFloat(fullMatch[4]);
+        fact = fullMatch[5].trim();
+      } else {
+        // Legacy: category|confidence: fact
+        const pipeMatch = trimmed.match(/^(\w+)\|(\d*\.?\d+):\s*(.+)/);
+        if (pipeMatch) {
+          cat = pipeMatch[1].toLowerCase();
+          confidence = parseFloat(pipeMatch[2]);
+          fact = pipeMatch[3].trim();
+        } else {
+          const colonIdx = trimmed.indexOf(":");
+          if (colonIdx === -1) continue;
+          cat = trimmed.slice(0, colonIdx).trim().toLowerCase();
+          fact = trimmed.slice(colonIdx + 1).trim();
+        }
+      }
 
-      if (validCategories.has(cat) && fact.length > 3 && fact.length < 200) {
-        entries.push({ fact, category: cat });
+      // Filter by confidence threshold
+      if (confidence < 0.6) continue;
+
+      if (validCategories.has(cat as MemoryCategory) && fact.length > 3 && fact.length < 200) {
+        entries.push({ fact, category: cat as MemoryCategory, confidence, emotion, intensity });
       }
     }
 
-    console.log(`[HER Memory] Extracted ${entries.length} facts`);
+    console.log(`[HER Memory] Extracted ${entries.length} facts (confidence > 0.6)`);
     return entries;
   } catch (err) {
     console.warn("[HER Memory] Extraction failed:", err);
@@ -268,10 +314,15 @@ export async function extractMemories(
  * Format memory entries into a context string for the system prompt.
  * Groups by category for readability.
  */
+/**
+ * Format memory entries into a natural context string for the system prompt.
+ * Rules (Part E): no timestamps, no technical labels, no repetition, max 8 items.
+ * Emotional memories get subtle tone hints.
+ */
 export function formatMemoryForPrompt(memories: MemoryEntry[]): string | null {
   if (memories.length === 0) return null;
 
-  // Deduplicate and take the most recent version of similar facts
+  // Deduplicate
   const seen = new Set<string>();
   const unique = memories.filter((m) => {
     const key = m.fact.toLowerCase().trim();
@@ -280,35 +331,29 @@ export function formatMemoryForPrompt(memories: MemoryEntry[]): string | null {
     return true;
   });
 
-  // Group by category
-  const groups: Record<string, string[]> = {};
-  for (const m of unique) {
-    if (!groups[m.category]) groups[m.category] = [];
-    groups[m.category].push(m.fact);
-  }
+  // Take top 8 (already ranked if coming from rankMemories)
+  const top = unique.slice(0, 8);
 
-  // Build readable context string
-  const parts: string[] = [];
+  // Build natural lines — no category labels, no timestamps
+  const lines = top.map((m) => {
+    let line = `- ${m.fact}`;
+    // Subtle emotional hint for high-intensity memories
+    if (m.emotion && m.emotion !== "neutral" && m.intensity && m.intensity >= 0.6) {
+      const emotionHints: Record<string, string> = {
+        anxious: "(this seemed to worry them)",
+        stressed: "(this was weighing on them)",
+        excited: "(they were really excited about this)",
+        sad: "(this was a sensitive topic)",
+        happy: "(this made them happy)",
+        hurt: "(this was painful for them)",
+        hopeful: "(they were hopeful about this)",
+        frustrated: "(this frustrated them)",
+      };
+      const hint = emotionHints[m.emotion];
+      if (hint) line += " " + hint;
+    }
+    return line;
+  });
 
-  // Identity first (most important)
-  if (groups.identity) {
-    parts.push(...groups.identity.map((f) => `- ${f}`));
-  }
-  if (groups.life) {
-    parts.push(...groups.life.map((f) => `- ${f}`));
-  }
-  if (groups.preference) {
-    parts.push(...groups.preference.map((f) => `- ${f}`));
-  }
-  if (groups.emotional) {
-    parts.push(...groups.emotional.map((f) => `- ${f}`));
-  }
-  if (groups.topic) {
-    parts.push(...groups.topic.map((f) => `- ${f}`));
-  }
-  if (groups.context) {
-    parts.push(...groups.context.map((f) => `- ${f} (recent)`));
-  }
-
-  return parts.join("\n");
+  return lines.join("\n");
 }

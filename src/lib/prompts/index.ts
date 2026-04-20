@@ -27,6 +27,7 @@ import { DYNAMICS } from "./dynamics";
 import { INITIATIVE } from "./initiative";
 import { MODE_OVERLAYS } from "./modes";
 import { buildRapportContext, type RapportLevel } from "../rapport";
+import { buildPersonalityAnchor } from "../personality-guard";
 
 // ── Public Exports ─────────────────────────────────────────
 
@@ -104,7 +105,22 @@ interface PromptOptions {
  *   8. Mode overlay (if any)
  */
 export function buildSystemPrompt(options: PromptOptions = {}): string {
+  // Current date/time awareness — HER always knows what time it is
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+  const timeStr = now.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
   const layers: string[] = [
+    `CURRENT DATE & TIME: ${dateStr}, ${timeStr} (server time)`,
     PERSONA,
     STYLE,
     DYNAMICS,
@@ -137,6 +153,9 @@ export function buildSystemPrompt(options: PromptOptions = {}): string {
   if (modeOverlay) {
     layers.push(modeOverlay);
   }
+
+  // Personality stability anchor (Step 21 Part G) — always last
+  layers.push(buildPersonalityAnchor());
 
   return layers.join("\n\n");
 }
