@@ -647,14 +647,25 @@ export default function ChatPage() {
       );
       if (older.length > 0) {
         const olderUi: Message[] = older.map(dbMessageToUiMessage);
-        setMessages([...olderUi, ...current]);
-        // Bump prepend count so Virtuoso keeps the scroll anchor stable
-        setPrependedCount((c) => c + olderUi.length);
+        // Dedupe against current — Supabase boundary semantics may include
+        // a row already in our array; duplicate keys would crash Virtuoso.
+        const existingIds = new Set(current.map((m) => m.id));
+        const fresh = olderUi.filter((m) => !existingIds.has(m.id));
+        if (fresh.length > 0) {
+          setMessages([...fresh, ...current]);
+          // Bump prepend count so Virtuoso keeps the scroll anchor stable
+          setPrependedCount((c) => c + fresh.length);
+        }
         // If we got fewer than a full page, we've hit the start
         if (older.length < MESSAGES_PAGE_SIZE) setHasMoreMessages(false);
       } else {
         setHasMoreMessages(false);
       }
+    } catch (err) {
+      // Never let a fetch failure crash the React tree — that's what was
+      // producing the "this page couldn't load" error on mobile.
+      console.warn("[HER] Load older messages failed:", err);
+      setError("couldn't load older messages — try scrolling again in a sec");
     } finally {
       setLoadingOlder(false);
     }
