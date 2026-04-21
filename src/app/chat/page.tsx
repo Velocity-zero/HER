@@ -37,7 +37,7 @@ import { markConversationSeen, getUnreadConversationIds } from "@/lib/conversati
 import { debug } from "@/lib/debug";
 import { useAuth } from "@/components/AuthProvider";
 import ChatHeader from "@/components/chat/ChatHeader";
-import ChatWindow, { INITIAL_TOP_INDEX } from "@/components/chat/ChatWindow";
+import ChatWindow from "@/components/chat/ChatWindow";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
@@ -288,13 +288,6 @@ export default function ChatPage() {
   const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
   const [loadingConvo, setLoadingConvo] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  /**
-   * How many messages have been prepended via "load older" since the
-   * conversation was opened. Used to compute Virtuoso's `firstItemIndex`
-   * so the user's scroll position stays anchored when older content lands.
-   * Reset to 0 on conversation switch, new chat, or app load.
-   */
-  const [prependedCount, setPrependedCount] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
   // Prevent double-sends
@@ -559,8 +552,6 @@ export default function ChatPage() {
       setMessages([createGreeting(surfaceCopyRef.current.greeting)]);
       setHasMoreMessages(false);
     }
-    // Fresh conversation — no prior prepend history
-    setPrependedCount(0);
 
     setActiveConvoId(conversationId);
     setActiveConversationId(conversationId);
@@ -671,13 +662,14 @@ export default function ChatPage() {
       if (older.length > 0) {
         const olderUi: Message[] = older.map(dbMessageToUiMessage);
         // Dedupe against current — Supabase boundary semantics may include
-        // a row already in our array; duplicate keys would crash Virtuoso.
+        // a row already in our array; duplicates would render as duplicate keys.
         const existingIds = new Set(current.map((m) => m.id));
         const fresh = olderUi.filter((m) => !existingIds.has(m.id));
         if (fresh.length > 0) {
           setMessages([...fresh, ...current]);
-          // Bump prepend count so Virtuoso keeps the scroll anchor stable
-          setPrependedCount((c) => c + fresh.length);
+          // ChatWindow's layout effect snapshots scrollHeight before/after
+          // and adjusts scrollTop to keep the user's view anchored — no
+          // index bookkeeping needed up here.
         }
         // If we got fewer than a full page, we've hit the start
         if (older.length < MESSAGES_PAGE_SIZE) setHasMoreMessages(false);
@@ -1419,7 +1411,6 @@ export default function ChatPage() {
     // Reset pagination — a fresh chat has no older history to load.
     setHasMoreMessages(false);
     setLoadingOlder(false);
-    setPrependedCount(0);
 
     setError(null);
     setIsTyping(false);
@@ -1565,7 +1556,6 @@ export default function ChatPage() {
         key={sessionKey}
         items={messages}
         itemKey={(m) => m.id}
-        firstItemIndex={INITIAL_TOP_INDEX - prependedCount}
         forceScrollTrigger={forceScrollTrigger}
         onScrollNearTop={hasMoreMessages && !loadingOlder ? handleLoadOlder : undefined}
         renderItem={(msg, i) => {
