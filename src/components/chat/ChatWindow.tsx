@@ -81,21 +81,14 @@ export default function ChatWindow<T>({
     });
   }, [forceScrollTrigger]);
 
-  // ── Pin to bottom during streaming if user is already there ──
-  // Note: we do NOT gate this on `atBottomRef.current` because virtuoso's
-  // "at bottom" signal can briefly flip false as the streaming message grows
-  // taller than the viewport, which would otherwise leave HER's reply hidden
-  // below the fold. `atBottomThreshold` (set on <Virtuoso/> below) handles
-  // the real "user scrolled away" case via virtuoso's own followOutput.
-  useEffect(() => {
-    if (scrollTrigger === undefined) return;
-    if (!atBottomRef.current) return;
-    virtuosoRef.current?.scrollToIndex({
-      index: "LAST",
-      align: "end",
-      behavior: "auto",
-    });
-  }, [scrollTrigger]);
+  // ── Streaming auto-scroll ──
+  // We intentionally do NOT manually scroll here on every streaming token.
+  // Virtuoso's `followOutput="smooth"` (set below) handles this correctly:
+  //   - if the user is at the bottom when content grows, it follows;
+  //   - if the user has scrolled away (even by a bit), it does NOT yank them.
+  // Manually calling scrollToIndex on every token caused the "yanks me back
+  // up the moment I scroll down to peek at her reply" bug.
+  void scrollTrigger;
 
   // ── Top-reached handler with light throttle ──
   // Parent already guards re-entry via its own `loadingOlder` flag, so this
@@ -185,9 +178,9 @@ export default function ChatWindow<T>({
         data={items}
         firstItemIndex={firstItemIndex}
         initialTopMostItemIndex={Math.max(items.length - 1, 0)}
-        followOutput="auto"
+        followOutput="smooth"
         atBottomStateChange={handleAtBottomChange}
-        atBottomThreshold={150}
+        atBottomThreshold={50}
         startReached={handleStartReached}
         itemContent={renderItemWrapped}
         components={{ Header: HeaderComp, Footer: FooterComp }}
