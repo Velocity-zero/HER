@@ -33,6 +33,8 @@ import {
 import { computeRapportLevel, type RapportLevel } from "@/lib/rapport";
 import { detectUserTimezone } from "@/lib/notification-settings";
 import { uploadDataUrlToStorage, isDataUrl } from "@/lib/image-storage";
+import { markConversationSeen, getUnreadConversationIds } from "@/lib/conversation-seen";
+import { debug } from "@/lib/debug";
 import { useAuth } from "@/components/AuthProvider";
 import ChatHeader from "@/components/chat/ChatHeader";
 import ChatWindow from "@/components/chat/ChatWindow";
@@ -337,7 +339,7 @@ export default function ChatPage() {
         .then((res) => res.json())
         .then((data) => {
           if (data.extracted > 0) {
-            console.log(`[HER] Extracted ${data.extracted} memories`);
+            debug(`[HER] Extracted ${data.extracted} memories`);
             // Refresh memory context with ranking based on recent conversation
             const ctxParam = recentCtxForMemory ? `&context=${encodeURIComponent(recentCtxForMemory)}` : "";
             authFetch(`/api/memory?userId=${encodeURIComponent(userId)}${ctxParam}`, {}, accessTokenRef.current)
@@ -388,10 +390,10 @@ export default function ChatPage() {
         .then((data) => {
           if (data.memoryContext) {
             setMemoryContext(data.memoryContext);
-            console.log("[HER] Memory loaded:", data.memoryContext.slice(0, 100));
+            debug("[HER] Memory loaded");
           } else if (rapportStatsRef.current.totalConversations >= 2) {
             // User has past conversations but no memories — run backfill once
-            console.log("[HER] No memories found but user has past conversations — running backfill...");
+            debug("[HER] No memories found — running backfill");
             authFetch("/api/memory/backfill", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -399,7 +401,7 @@ export default function ChatPage() {
             }, accessTokenRef.current)
               .then((r) => r.json())
               .then((result) => {
-                console.log("[HER] Backfill complete:", result);
+                debug("[HER] Backfill complete", result?.extracted ?? 0);
                 if (result.extracted > 0) {
                   // Re-fetch memory context now that backfill is done
                   authFetch(`/api/memory?userId=${encodeURIComponent(userId)}`, {}, accessTokenRef.current)
@@ -429,6 +431,9 @@ export default function ChatPage() {
 
     // Initialize Supabase persistence (device profile) — fire-and-forget
     initPersistence().catch(() => {});
+    // Mount-only: greeting is read once at hydrate; rapport-driven copy
+    // refresh is handled by the rapport effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Load conversation history when auth resolves ──
@@ -444,11 +449,27 @@ export default function ChatPage() {
         setConversations(convos);
         setHistoryLoading(false);
 
-        // If we have a stored active convo ID and it's in the list, load it
-        const storedId = getActiveConversationId();
-        if (storedId && convos.some((c) => c.id === storedId)) {
-          loadConversationMessages(storedId);
+        // Priority for which conversation to open:
+        //   1. ?c=<id> URL param (set when user taps a notification)
+        //   2. Last active conversation from localStorage
+        let targetId: string | null = null;
+        if (typeof window !== "undefined") {
+          const params = new URLSearchParams(window.location.search);
+          const fromUrl = params.get("c");
+          if (fromUrl && convos.some((c) => c.id === fromUrl)) {
+            targetId = fromUrl;
+            // Clean the URL so refreshing doesn't re-open it
+            const cleanUrl = window.location.pathname;
+            window.history.replaceState({}, "", cleanUrl);
+          }
         }
+        if (!targetId) {
+          const storedId = getActiveConversationId();
+          if (storedId && convos.some((c) => c.id === storedId)) {
+            targetId = storedId;
+          }
+        }
+        if (targetId) loadConversationMessages(targetId);
       }
     });
 
@@ -511,6 +532,8 @@ export default function ChatPage() {
 
     setActiveConvoId(conversationId);
     setActiveConversationId(conversationId);
+    // Mark this conversation as seen so the unread dot disappears.
+    markConversationSeen(conversationId);
     setLoadingConvo(false);
     setIsTyping(false);
     setIsStreaming(false);
@@ -524,6 +547,31 @@ export default function ChatPage() {
     setForceScrollTrigger((n) => n + 1);
     setError(null);
   }, []); // no deps — reads messages via messagesRef to avoid stale closures
+
+  // Stable ref for loadConversationMessages so listeners (SW messages, etc.)
+  // can call the latest version without rebinding.
+  const loadConvoRef = useRef(loadConversationMessages);
+  loadConvoRef.current = loadConversationMessages;
+
+  // ── Listen for SW notification taps while the app is already open ──
+  // The SW posts { type: "her:open-conversation", conversationId } so we
+  // can switch in-place instead of doing a full navigation.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data;
+      if (!data || data.type !== "her:open-conversation") return;
+      const id = data.conversationId;
+      if (typeof id !== "string") return;
+      // Refresh the conversation list first so the freshly-arrived message is visible
+      // in the drawer, then jump to the right conversation.
+      loadConvoRef.current(id);
+    };
+
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, []);
 
   // ── Select a conversation from history ──
   const handleSelectConversation = useCallback(
@@ -541,6 +589,38 @@ export default function ChatPage() {
     const convos = await listUserConversations(user.id);
     setConversations(convos);
   }, [isAuthenticated, user?.id]);
+
+  // ── Unread set: conversations with last_message_at newer than last seen ──
+  // Recomputed when the list refreshes or the active conversation changes
+  // (so the dot disappears the moment you open a conversation).
+  const unreadIds = useMemo(
+    () => getUnreadConversationIds(conversations, activeConvoId),
+    [conversations, activeConvoId]
+  );
+
+  // ── Background poll: refresh the conversation list while the app is open ──
+  // Catches notifications that arrived in other conversations (or while the
+  // app was hidden) so the unread dot lights up without a manual refresh.
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) return;
+    const tick = () => { refreshConversations().catch(() => {}); };
+    // Poll every 60s while visible; immediately on visibilitychange to visible.
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") tick();
+    }, 60_000);
+    const onVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") tick();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisible);
+    }
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisible);
+      }
+    };
+  }, [isAuthenticated, user?.id, refreshConversations]);
 
   // ── Load older messages (pagination) ──
   const handleLoadOlder = useCallback(async () => {
@@ -1029,7 +1109,7 @@ export default function ChatPage() {
       sendingRef.current = false;
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [activeConvoId, refreshConversations, conversationMode, memoryContext, replyingTo]);
+  }, [activeConvoId, refreshConversations, conversationMode, memoryContext, replyingTo, LOCAL_IMAGE, isAuthenticated]);
 
   const handleRetry = useCallback(() => {
     if (!retryContent || sendingRef.current) return;
@@ -1273,7 +1353,7 @@ export default function ChatPage() {
       sendingRef.current = false;
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [activeConvoId, refreshConversations]);
+  }, [activeConvoId, refreshConversations, LOCAL_IMAGE]);
 
   // ── New chat / start over ──
   const handleClear = useCallback(() => {
@@ -1290,6 +1370,10 @@ export default function ChatPage() {
     const freshCopy = createSurfaceCopyBundle(rapportLevel);
     setSurfaceCopy(freshCopy);
     setMessages([createGreeting(freshCopy.greeting)]);
+
+    // Reset pagination — a fresh chat has no older history to load.
+    setHasMoreMessages(false);
+    setLoadingOlder(false);
 
     setError(null);
     setIsTyping(false);
@@ -1411,6 +1495,8 @@ export default function ChatPage() {
         onDeleteConversation={handleDeleteConversation}
         isAuthenticated={isAuthenticated}
         loading={historyLoading}
+        unreadIds={unreadIds}
+        accessToken={accessTokenRef.current}
       />
 
       {/* Loading overlay for conversation switch */}
@@ -1423,7 +1509,12 @@ export default function ChatPage() {
         </div>
       )}
 
-      <ChatWindow scrollTrigger={scrollTrigger} forceScrollTrigger={forceScrollTrigger}>
+      <ChatWindow
+        scrollTrigger={scrollTrigger}
+        forceScrollTrigger={forceScrollTrigger}
+        onScrollNearTop={hasMoreMessages && !loadingOlder ? handleLoadOlder : undefined}
+        prependAnchor={messages.length}
+      >
         <div key={sessionKey} className="animate-session-fade">
           {/* Empty state — shown when conversation only has the greeting */}
           {!isTyping && messages.length === 1 && messages[0].id === "greeting" && (
@@ -1435,17 +1526,11 @@ export default function ChatPage() {
             />
           )}
 
-          {/* Load older messages — only shown when paginated history exists */}
-          {hasMoreMessages && (
-            <div className="flex justify-center pt-2 pb-4">
-              <button
-                type="button"
-                onClick={handleLoadOlder}
-                disabled={loadingOlder}
-                className="rounded-full border border-her-border/25 bg-her-surface/40 px-4 py-1.5 text-[11px] tracking-[0.06em] text-her-text-muted/55 transition-all duration-300 hover:border-her-accent/25 hover:bg-her-accent/[0.04] hover:text-her-text-muted/75 active:scale-[0.96] disabled:opacity-40 disabled:cursor-default sm:text-[12px]"
-              >
-                {loadingOlder ? "loading…" : "load older messages"}
-              </button>
+          {/* Subtle loading indicator while older messages stream in — no button */}
+          {loadingOlder && (
+            <div className="flex justify-center py-3" aria-live="polite">
+              <div className="animate-presence-breathe h-1.5 w-1.5 rounded-full bg-her-accent/35" />
+              <span className="sr-only">Loading older messages</span>
             </div>
           )}
 

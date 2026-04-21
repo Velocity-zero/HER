@@ -17,6 +17,7 @@ import { getSupabaseClient } from "@/lib/supabase-client";
 import { extractMemories, saveMemoryEntries } from "@/lib/memory";
 import { backfillEmbeddings } from "@/lib/embeddings";
 import { validateApiRequest } from "@/lib/api-auth";
+import { debug } from "@/lib/debug";
 
 export async function POST(req: NextRequest) {
   try {
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Failed to fetch conversations" }, { status: 500 });
     }
 
-    console.log(`[HER Backfill] Found ${conversations.length} conversations for user ${userId.slice(0, 8)}...`);
+    debug(`[HER Backfill] Found ${conversations.length} conversations for user ${userId.slice(0, 8)}...`);
 
     let totalExtracted = 0;
     let processed = 0;
@@ -75,12 +76,12 @@ export async function POST(req: NextRequest) {
       // Skip short conversations (less than 3 user messages)
       const userMsgCount = messages.filter((m: { role: string }) => m.role === "user").length;
       if (userMsgCount < 3) {
-        console.log(`[HER Backfill] Skipping "${convo.title}" (only ${userMsgCount} user messages)`);
+        debug(`[HER Backfill] Skipping "${convo.title}" (only ${userMsgCount} user messages)`);
         skipped++;
         continue;
       }
 
-      console.log(`[HER Backfill] Processing "${convo.title}" (${messages.length} messages)...`);
+      debug(`[HER Backfill] Processing "${convo.title}" (${messages.length} messages)...`);
 
       try {
         const entries = await extractMemories(
@@ -104,13 +105,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    console.log(`[HER Backfill] Done! Processed: ${processed}, Extracted: ${totalExtracted}, Skipped: ${skipped}`);
+    debug(`[HER Backfill] Done! Processed: ${processed}, Extracted: ${totalExtracted}, Skipped: ${skipped}`);
 
     // 3. Backfill embeddings for all memories without one
     let embeddingsGenerated = 0;
     try {
       embeddingsGenerated = await backfillEmbeddings(userId, 100);
-      console.log(`[HER Backfill] Generated ${embeddingsGenerated} embeddings`);
+      debug(`[HER Backfill] Generated ${embeddingsGenerated} embeddings`);
     } catch (err) {
       console.warn("[HER Backfill] Embedding backfill failed:", err);
     }

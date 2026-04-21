@@ -11,6 +11,7 @@
  */
 
 import type { ScheduledEvent } from "./scheduled-events";
+import { debug } from "@/lib/debug";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ Generate a single short message.`;
     if (!tooSimilar || attempt === 2) {
       return candidate;
     }
-    console.log(`[HER Notify] Attempt ${attempt + 1}: too similar, regenerating`);
+    debug(`[HER Notify] Attempt ${attempt + 1}: too similar, regenerating`);
   }
 
   return getRandomFallback(event.type);

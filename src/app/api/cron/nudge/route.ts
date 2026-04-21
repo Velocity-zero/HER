@@ -27,6 +27,7 @@ import { getInteractionPattern } from "@/lib/interaction-patterns";
 import { getNotificationSettings, isQuietHours } from "@/lib/notification-settings";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { sendPushNotification } from "@/lib/push";
+import { debug } from "@/lib/debug";
 
 export const dynamic = "force-dynamic";
 
@@ -215,7 +216,7 @@ export async function GET(req: NextRequest) {
       }
 
       nudged++;
-      console.log(`[HER Nudge] Sent nudge to ${userId}: "${messageText.slice(0, 50)}"`);
+      debug(`[HER Nudge] Sent nudge (${messageText.length} chars)`);
     } catch (err) {
       console.error(`[HER Nudge] Error for user ${userId}:`, err);
       skipped++;

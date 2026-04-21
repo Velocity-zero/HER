@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { debug } from "@/lib/debug";
 import {
   nvidiaChat,
   buildVisionRefinementMessages,
@@ -73,8 +74,8 @@ export async function POST(req: NextRequest) {
 
     const userPrompt = (prompt && prompt.trim()) || DEFAULT_PROMPT;
 
-    console.log(
-      `[HER Vision] Analyzing image (${Math.round(image.length / 1024)}KB) — prompt: "${userPrompt.slice(0, 60)}…"`
+    debug(
+      `[HER Vision] Analyzing image (${Math.round(image.length / 1024)}KB)`
     );
 
     // ── Build multimodal payload (OpenAI-compatible format) ──
@@ -152,11 +153,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Step 2: Rewrite raw analysis in HER's voice via Mistral ──
-    console.log(
-      `[HER Vision] Raw analysis (${rawAnalysis.length} chars) → rewriting in HER's voice…`
+    debug(
+      `[HER Vision] Raw analysis (${rawAnalysis.length} chars) → rewriting`
     );
-    // Debug log — not user-facing
-    console.debug("[HER Vision] Raw analysis:", rawAnalysis.slice(0, 400));
 
     let herResponse: string;
     try {
@@ -178,16 +177,15 @@ export async function POST(req: NextRequest) {
       if (isSubjectiveVisionQuestion(userPrompt)) {
         // Subjective question: never dump raw CV output — use a context-aware HER-style fallback
         herResponse = await generateDynamicVisionFallback(userPrompt, rawAnalysis);
-        console.log("[HER Vision] Subjective question — using dynamic warm fallback");
+        debug("[HER Vision] Subjective fallback");
       } else {
         // Literal/objective question: raw analysis is acceptable as fallback
         herResponse = rawAnalysis;
-        console.log("[HER Vision] Objective question — falling back to raw analysis");
+        debug("[HER Vision] Objective fallback");
       }
     }
 
-    console.log("[HER Vision] Pipeline complete");
-    console.debug("[HER Vision] HER response:", herResponse.slice(0, 200));
+    debug("[HER Vision] Pipeline complete");
 
     return NextResponse.json({ message: herResponse.trim() });
   } catch (error) {

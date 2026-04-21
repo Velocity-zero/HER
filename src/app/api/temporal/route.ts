@@ -20,6 +20,7 @@ import {
   detectContinuityUpdate,
 } from "@/lib/temporal";
 import { createScheduledEvent, getPendingEventsForUser, cancelEvent } from "@/lib/scheduled-events";
+import { debug } from "@/lib/debug";
 
 export async function POST(req: NextRequest) {
   try {
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest) {
       // Full resolution check (completed/cancelled)
       const resolved = await detectEventResolution(message, pendingEvents, apiKey);
       if (resolved.length > 0) {
-        console.log(`[HER Temporal] Resolved ${resolved.length} events for user ${auth.userId}`);
+        debug(`[HER Temporal] Resolved ${resolved.length} events for user ${auth.userId}`);
       }
 
       // ── Continuity learning (Step 18 Part F): detect reschedules ──
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
         const update = await detectContinuityUpdate(message, event.context.summary, new Date(), apiKey, userTimezone);
         if (update.status === "completed") {
           await cancelEvent(event.id);
-          console.log(`[HER Temporal] Continuity: event ${event.id} completed`);
+          debug(`[HER Temporal] Continuity: event ${event.id} completed`);
         } else if (update.status === "reschedule" && update.newTime) {
           await cancelEvent(event.id);
           await createScheduledEvent({
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
             originalMessage: event.context.originalMessage || "",
             applyVariance: true,
           });
-          console.log(`[HER Temporal] Continuity: event ${event.id} rescheduled → ${update.newTime}`);
+          debug(`[HER Temporal] Continuity: event ${event.id} rescheduled → ${update.newTime}`);
         }
       }
     }
@@ -97,11 +98,11 @@ export async function POST(req: NextRequest) {
         const daysFuture = (triggerDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
 
         if (intent.context.emotionalWeight === "low" && daysFuture > 7) {
-          console.log("[HER Temporal] Skipping low-weight far-future event");
+          debug("[HER Temporal] Skipping low-weight far-future event");
           return NextResponse.json({ detected: false, reason: "low-weight-far-future" });
         }
         if (daysFuture > 30) {
-          console.log("[HER Temporal] Skipping event >30 days out");
+          debug("[HER Temporal] Skipping event >30 days out");
           return NextResponse.json({ detected: false, reason: "too-far-future" });
         }
 
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
           applyVariance: true,
         });
 
-        console.log(
+        debug(
           `[HER Temporal] ${intent.type} detected for user ${auth.userId}: "${intent.context.summary}" → ${intent.triggerAt}`
         );
 
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest) {
           originalMessage: message,
           applyVariance: true,
         });
-        console.log(`[HER Temporal] Predictive follow-up scheduled: "${followUp.reasoning}" → ${followUp.estimatedTime} (confidence: ${followUp.confidence})`);
+        debug(`[HER Temporal] Predictive follow-up scheduled: "${followUp.reasoning}" → ${followUp.estimatedTime} (confidence: ${followUp.confidence})`);
         if (eventId) {
           return NextResponse.json({
             detected: true,

@@ -10,8 +10,9 @@
  * but never block the chat UI.
  */
 
-import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client";
+import { getSupabaseClient } from "./supabase-client";
 import type { TemporalIntent } from "./temporal";
+import { debug } from "./debug";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -136,7 +137,7 @@ export async function createScheduledEvent(params: {
       return null;
     }
 
-    console.log("[HER Events] Created:", data.id, params.intent.context.summary,
+    debug("[HER Events] Created:", data.id, params.intent.context.summary,
       params.applyVariance ? `(variance applied: ${finalTriggerAt})` : "");
 
     // ── Pre-emptive reminder for high-weight events (Part I) ──
@@ -172,7 +173,7 @@ export async function createScheduledEvent(params: {
           })
           .then(({ error: preErr }) => {
             if (preErr) console.warn("[HER Events] Pre-reminder create failed:", preErr.message);
-            else console.log("[HER Events] Pre-reminder scheduled for high-weight event");
+            else debug("[HER Events] Pre-reminder scheduled for high-weight event");
           });
       }
     }

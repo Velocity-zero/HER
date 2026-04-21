@@ -1,17 +1,23 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import Link from "next/link";
 import type { ConversationSummary } from "@/lib/supabase-persistence";
+import { useAuth } from "@/components/AuthProvider";
+import AuthModal from "@/components/AuthModal";
+import NotificationSettings from "@/components/chat/NotificationSettings";
 
 /**
  * HistoryDrawer — A soft, slide-in panel for authenticated chat history.
  *
  * Features:
+ *   - Identity strip (user chip + sign out, or sign-in pill for guests)
+ *   - Notifications row (opens push settings)
+ *   - New chat button
  *   - Conversation list with date grouping (Today / Yesterday / Older)
  *   - Inline rename via "…" menu
  *   - Delete with inline confirmation
- *   - Guest nudge to sign in
- *   - Warm empty state
+ *   - Footer "back to landing" link
  */
 
 interface HistoryDrawerProps {
@@ -25,6 +31,10 @@ interface HistoryDrawerProps {
   onDeleteConversation: (id: string) => Promise<boolean>;
   isAuthenticated: boolean;
   loading: boolean;
+  /** Conversation IDs with unread messages (e.g. notifications arrived while away). */
+  unreadIds?: Set<string>;
+  /** Required to enable notification settings (push subscribe API). */
+  accessToken?: string | null;
 }
 
 // ── Date helpers ───────────────────────────────────────────
@@ -94,6 +104,8 @@ export default function HistoryDrawer({
   onDeleteConversation,
   isAuthenticated,
   loading,
+  unreadIds,
+  accessToken,
 }: HistoryDrawerProps) {
   // ── Local interaction state ──
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -101,6 +113,12 @@ export default function HistoryDrawer({
   const [renameValue, setRenameValue] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Modals owned by the drawer (relocated from ChatHeader)
+  const [authOpen, setAuthOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const { user, signOut } = useAuth();
+  const userLabel = user?.email ? user.email.split("@")[0].slice(0, 18) : null;
+
 
   const renameRef = useRef<HTMLInputElement>(null);
 
@@ -255,6 +273,7 @@ export default function HistoryDrawer({
     const isDeleting = deletingId === convo.id;
     const isMenuOpen = menuOpenId === convo.id;
     const isBusy = busyId === convo.id;
+    const isUnread = !!unreadIds?.has(convo.id);
 
     // ── Delete confirmation state ──
     if (isDeleting) {
@@ -328,11 +347,19 @@ export default function HistoryDrawer({
         <button
           onClick={() => handleSelect(convo.id)}
           className="min-w-0 flex-1 px-3.5 py-3 text-left"
-          aria-label={`Open conversation: ${convo.title || "untitled"}`}
+          aria-label={`Open conversation: ${convo.title || "untitled"}${isUnread ? " (new messages)" : ""}`}
         >
-          <p className="truncate text-[12px] leading-snug tracking-[0.02em]">
-            {convo.title || "untitled"}
-          </p>
+          <div className="flex items-center gap-2">
+            {isUnread && (
+              <span
+                aria-hidden="true"
+                className="inline-block h-[6px] w-[6px] shrink-0 rounded-full bg-her-accent shadow-[0_0_6px_rgba(201,110,90,0.4)]"
+              />
+            )}
+            <p className={`truncate text-[12px] leading-snug tracking-[0.02em] ${isUnread ? "text-her-text/85 font-medium" : ""}`}>
+              {convo.title || "untitled"}
+            </p>
+          </div>
           <p className="mt-0.5 text-[10px] tracking-[0.04em] opacity-50">
             {relativeTime(convo.last_message_at)}
           </p>
@@ -440,9 +467,39 @@ export default function HistoryDrawer({
           </button>
         </div>
 
+        {/* Identity strip — quiet, sits above everything */}
+        <div className="px-5 pb-3 sm:px-6">
+          {isAuthenticated && userLabel ? (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-her-border/15 bg-her-surface/15 px-3.5 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="h-[6px] w-[6px] shrink-0 rounded-full bg-her-accent/55" />
+                <span className="truncate text-[11px] tracking-[0.04em] text-her-text-muted/70" title={user?.email || ""}>
+                  {userLabel}
+                </span>
+              </div>
+              <button
+                onClick={signOut}
+                className="shrink-0 rounded-full px-2 py-0.5 text-[10px] tracking-[0.08em] text-her-text-muted/35 transition-colors duration-300 hover:text-her-accent/70"
+                aria-label="Sign out"
+              >
+                sign out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAuthOpen(true)}
+              aria-label="Sign in"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-her-border/25 bg-her-surface/20 px-3.5 py-2.5 text-[11px] tracking-[0.06em] text-her-text-muted/55 transition-all duration-300 hover:border-her-accent/25 hover:bg-her-accent/[0.04] hover:text-her-text-muted/75 active:scale-[0.98]"
+            >
+              <div className="animate-breathe h-[6px] w-[6px] rounded-full bg-her-accent/50" />
+              sign in
+            </button>
+          )}
+        </div>
+
         {/* New chat button */}
         {isAuthenticated && (
-          <div className="px-5 pb-3 sm:px-6">
+          <div className="px-5 pb-2 sm:px-6">
             <button
               onClick={handleNewChat}
               aria-label="Start a new chat"
@@ -457,6 +514,27 @@ export default function HistoryDrawer({
                 <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
               </svg>
               new chat
+            </button>
+          </div>
+        )}
+
+        {/* Notifications row — same family as new-chat, slightly quieter */}
+        {isAuthenticated && (
+          <div className="px-5 pb-3 sm:px-6">
+            <button
+              onClick={() => setNotifyOpen(true)}
+              aria-label="Notification settings"
+              className="flex w-full items-center gap-2 rounded-xl px-3.5 py-2 text-[11px] tracking-[0.06em] text-her-text-muted/40 transition-all duration-300 hover:bg-her-surface/25 hover:text-her-text-muted/65 active:scale-[0.98]"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className="h-3.5 w-3.5"
+              >
+                <path fillRule="evenodd" d="M10 2a6 6 0 00-6 6c0 1.887-.454 3.665-1.257 5.234a.75.75 0 00.515 1.076 32.91 32.91 0 003.256.508 3.5 3.5 0 006.972 0 32.903 32.903 0 003.256-.508.75.75 0 00.515-1.076A11.448 11.448 0 0116 8a6 6 0 00-6-6zM8.05 14.943a33.54 33.54 0 003.9 0 2 2 0 01-3.9 0z" clipRule="evenodd" />
+              </svg>
+              notifications
             </button>
           </div>
         )}
@@ -514,9 +592,42 @@ export default function HistoryDrawer({
           )}
         </div>
 
+        {/* Footer — back to landing, sits above the gradient hairline */}
+        <div className="px-5 pb-2 pt-1 sm:px-6">
+          <Link
+            href="/"
+            className="flex items-center justify-center gap-1.5 rounded-full py-1.5 text-[10px] tracking-[0.12em] text-her-text-muted/30 transition-colors duration-300 hover:text-her-text-muted/60"
+            aria-label="Back to landing page"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="h-2.5 w-2.5"
+            >
+              <path
+                fillRule="evenodd"
+                d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z"
+                clipRule="evenodd"
+              />
+            </svg>
+            back to landing
+          </Link>
+        </div>
+
         {/* Subtle bottom border glow */}
         <div className="h-px bg-gradient-to-r from-transparent via-her-border/30 to-transparent" />
       </div>
+
+      {/* Auth modal — relocated from header */}
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
+
+      {/* Notification settings panel — relocated from header */}
+      <NotificationSettings
+        open={notifyOpen}
+        onClose={() => setNotifyOpen(false)}
+        accessToken={accessToken ?? null}
+      />
     </>
   );
 }

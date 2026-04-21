@@ -15,6 +15,7 @@
  */
 
 import { getSupabaseClient } from "./supabase-client";
+import { debug } from "@/lib/debug";
 
 // ── NVIDIA Embedding API ───────────────────────────────────
 
@@ -108,7 +109,7 @@ async function checkPgvectorAvailable(): Promise<boolean> {
 
     pgvectorAvailable = !error;
     if (error) {
-      console.log("[HER Embedding] pgvector not available — falling back to keyword matching");
+      debug("[HER Embedding] pgvector not available — falling back to keyword matching");
     }
   } catch {
     pgvectorAvailable = false;
@@ -148,7 +149,7 @@ export async function getSemanticMemories(
       // If RPC doesn't exist, mark pgvector as unavailable
       if (error.message.includes("function") || error.message.includes("does not exist")) {
         pgvectorAvailable = false;
-        console.log("[HER Embedding] match_memories RPC not found — disabling semantic search");
+        debug("[HER Embedding] match_memories RPC not found — disabling semantic search");
       }
       return [];
     }
@@ -219,7 +220,7 @@ export async function backfillEmbeddings(userId: string, batchSize: number = 20)
       count++;
     }
 
-    console.log(`[HER Embedding] Backfilled ${count} embeddings for user ${userId}`);
+    debug(`[HER Embedding] Backfilled ${count} embeddings for user ${userId}`);
     return count;
   } catch (err) {
     console.warn("[HER Embedding] Backfill failed:", err);

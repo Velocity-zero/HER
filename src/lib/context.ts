@@ -59,9 +59,11 @@ export const CONTEXT_CONFIG = {
  *       The mood was warm and reflective."
  */
 export function buildConversationSummary(
-  _olderMessages: Message[]
+  olderMessages: Message[]
 ): string | null {
-  // TODO: Implement summarization
+  // TODO: Implement summarization (rolling summary of conversations >50 msgs)
+  // would dramatically reduce token cost on engaged users.
+  void olderMessages;
   return null;
 }
 

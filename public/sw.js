@@ -4,7 +4,7 @@
 // and prevents the "page couldn't load" failure caused by stale HTML
 // referencing old build hashes.
 
-const CACHE_VERSION = "20260421-3";
+const CACHE_VERSION = "20260421-5";
 const CACHE_NAME = `her-static-${CACHE_VERSION}`;
 
 // Install: take over immediately, no pre-caching of pages.
@@ -47,20 +47,30 @@ self.addEventListener("push", (event) => {
   }
 });
 
-// Notification click: open or focus the chat page
+// Notification click: open or focus the correct conversation.
+// If the notification carries a conversationId, the URL becomes /chat?c=<id>
+// so the chat page can switch to that conversation on load. If the app is
+// already open, we postMessage the id so the page can switch in-place
+// without a navigation.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  const url = event.notification.data?.url || "/chat";
+  const data = event.notification.data || {};
+  const convoId = data.conversationId || null;
+  const targetUrl = convoId ? `/chat?c=${encodeURIComponent(convoId)}` : (data.url || "/chat");
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if (client.url.includes("/chat") && "focus" in client) {
+          // Tell the live page to switch — no full reload needed.
+          if (convoId) {
+            client.postMessage({ type: "her:open-conversation", conversationId: convoId });
+          }
           return client.focus();
         }
       }
-      return self.clients.openWindow(url);
+      return self.clients.openWindow(targetUrl);
     })
   );
 });

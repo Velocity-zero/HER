@@ -314,9 +314,10 @@ export interface DbMessage {
 
 /**
  * Default page size for conversation message loading.
- * Keeps initial render light on mobile devices.
+ * Kept small (30) so each load adds a manageable batch of DOM nodes
+ * to the rendered list — mobile WebView struggles past ~100 nodes at once.
  */
-export const MESSAGES_PAGE_SIZE = 50;
+export const MESSAGES_PAGE_SIZE = 30;
 
 /**
  * Fetch the most recent N messages for a conversation, oldest-first.

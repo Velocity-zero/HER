@@ -51,7 +51,8 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Resolve the initial session once on mount
+  // Resolve the initial session once on mount.
+  /* eslint-disable react-hooks/set-state-in-effect -- syncing external Supabase auth store into React state is the canonical pattern; setLoading is the natural completion signal. */
   useEffect(() => {
     if (!isSupabaseConfigured()) {
       // No Supabase → instant guest mode, no loading
@@ -81,6 +82,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
       unsubscribe?.();
     };
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSignOut = useCallback(async () => {
     await authSignOut();

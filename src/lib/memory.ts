@@ -18,8 +18,9 @@
  *   "they have a dog named Biscuit"
  */
 
-import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client";
+import { getSupabaseClient } from "./supabase-client";
 import { nvidiaChat } from "./multimodal";
+import { debug } from "@/lib/debug";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -83,7 +84,7 @@ export async function saveMemoryEntries(
     });
 
     if (newEntries.length === 0) {
-      console.log("[HER Memory] No new facts to store (all duplicates)");
+      debug("[HER Memory] No new facts to store (all duplicates)");
       return;
     }
 
@@ -102,7 +103,7 @@ export async function saveMemoryEntries(
     if (error) {
       console.warn("[HER Memory] Save failed:", error.message);
     } else {
-      console.log(`[HER Memory] Saved ${rows.length} new memories`);
+      debug(`[HER Memory] Saved ${rows.length} new memories`);
     }
   } catch (err) {
     console.warn("[HER Memory] Save exception:", err);
@@ -226,7 +227,7 @@ export async function extractMemories(
   // Only process conversations with enough substance
   const userMessages = messages.filter((m) => m.role === "user");
   if (userMessages.length < 3) {
-    console.log("[HER Memory] Conversation too short for extraction (<3 user messages)");
+    debug("[HER Memory] Conversation too short for extraction (<3 user messages)");
     return [];
   }
 
@@ -248,7 +249,7 @@ export async function extractMemories(
 
     // Parse response
     if (response.trim().toUpperCase() === "NONE") {
-      console.log("[HER Memory] Nothing worth remembering from this conversation");
+      debug("[HER Memory] Nothing worth remembering from this conversation");
       return [];
     }
 
@@ -300,7 +301,7 @@ export async function extractMemories(
       }
     }
 
-    console.log(`[HER Memory] Extracted ${entries.length} facts (confidence > 0.6)`);
+    debug(`[HER Memory] Extracted ${entries.length} facts (confidence > 0.6)`);
     return entries;
   } catch (err) {
     console.warn("[HER Memory] Extraction failed:", err);

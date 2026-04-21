@@ -13,6 +13,7 @@
 import { nvidiaChat } from "./multimodal";
 import { reinforceMemory } from "./memory-ranking";
 import { getSupabaseClient } from "./supabase-client";
+import { debug } from "@/lib/debug";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ export async function applyMemoryFeedback(feedbacks: MemoryFeedback[]): Promise<
       switch (fb.action) {
         case "reinforce":
           await reinforceMemory(fb.memoryId);
-          console.log(`[HER Memory Feedback] Reinforced: ${fb.memoryId}`);
+          debug(`[HER Memory Feedback] Reinforced: ${fb.memoryId}`);
           break;
 
         case "correct":
@@ -137,7 +138,7 @@ export async function applyMemoryFeedback(feedbacks: MemoryFeedback[]): Promise<
                 updated_at: new Date().toISOString(),
               })
               .eq("id", fb.memoryId);
-            console.log(`[HER Memory Feedback] Corrected: ${fb.memoryId}`);
+            debug(`[HER Memory Feedback] Corrected: ${fb.memoryId}`);
           }
           break;
 
@@ -149,7 +150,7 @@ export async function applyMemoryFeedback(feedbacks: MemoryFeedback[]): Promise<
             .from("user_memories")
             .update(updates)
             .eq("id", fb.memoryId);
-          console.log(`[HER Memory Feedback] Adjusted emotion: ${fb.memoryId} → ${fb.newEmotion}`);
+          debug(`[HER Memory Feedback] Adjusted emotion: ${fb.memoryId} → ${fb.newEmotion}`);
           break;
 
         case "remove":
@@ -157,7 +158,7 @@ export async function applyMemoryFeedback(feedbacks: MemoryFeedback[]): Promise<
             .from("user_memories")
             .delete()
             .eq("id", fb.memoryId);
-          console.log(`[HER Memory Feedback] Removed: ${fb.memoryId}`);
+          debug(`[HER Memory Feedback] Removed: ${fb.memoryId}`);
           break;
       }
     } catch (err) {

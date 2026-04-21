@@ -37,6 +37,7 @@ export default function NotificationSettings({
   const [saving, setSaving] = useState(false);
 
   // Load settings
+  /* eslint-disable react-hooks/set-state-in-effect -- fetches server settings + reads Notification.permission on modal open; both are external sources, not derivable. */
   useEffect(() => {
     if (!open) return;
     authFetch("/api/notifications/settings", {}, accessToken)
@@ -53,6 +54,7 @@ export default function NotificationSettings({
       setPushEnabled(Notification.permission === "granted");
     }
   }, [open, accessToken]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const save = useCallback(
     async (updates: Partial<Settings>) => {

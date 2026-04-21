@@ -8,7 +8,6 @@ import {
   resolveApiKey,
   DEFAULT_CREATE_MODEL_ID,
   DEFAULT_EDIT_MODEL_ID,
-  type ImageModelDef,
 } from "@/lib/image-models";
 import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
 

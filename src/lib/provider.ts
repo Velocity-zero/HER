@@ -10,10 +10,6 @@
 
 import { ModelMessage } from "./types";
 
-// ── Provider Interface ─────────────────────────────────────
-
-type ProviderFn = (messages: ModelMessage[]) => Promise<string>;
-
 // ── NVIDIA NIM Constants (shared with multimodal.ts) ───────
 
 export const NVIDIA_CHAT_URL =

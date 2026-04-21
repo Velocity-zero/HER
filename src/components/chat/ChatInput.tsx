@@ -79,7 +79,8 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
     el.style.overflowY = natural > MAX_HEIGHT ? "auto" : "hidden";
   }, []);
 
-  // Consume prefilled text from suggestion chips
+  // Consume prefilled text from suggestion chips.
+  /* eslint-disable react-hooks/set-state-in-effect -- prop→state mirror is required: the value becomes editable once consumed, so we can't derive it. */
   useEffect(() => {
     if (prefillText) {
       setValue(prefillText);
@@ -90,6 +91,7 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
       });
     }
   }, [prefillText, onPrefillConsumed, recalcHeight]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
@@ -187,6 +189,7 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
         {image && (
           <div className="animate-fade-in mb-2.5 flex items-start gap-2">
             <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element -- base64 data URL, no remote optimization possible */}
               <img
                 src={image}
                 alt="Selected photo"

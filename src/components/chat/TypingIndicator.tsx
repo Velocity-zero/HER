@@ -9,7 +9,11 @@ interface TypingIndicatorProps {
   label?: string;
 }
 
-export default function TypingIndicator({ label }: TypingIndicatorProps) {
+export default function TypingIndicator(_props: TypingIndicatorProps) {
+  // Note: label currently unused — the indicator communicates via the breathing
+  // dot and trailing dots alone. Keeping the prop in the signature so callers
+  // can pass it without breaking when we wire it back up.
+  void _props;
   return (
     <div className="animate-fade-in mb-5 flex flex-col items-start sm:mb-6">
       <span className="mb-1.5 ml-0.5 text-[9px] font-medium tracking-[0.18em] uppercase text-her-accent/40 sm:text-[10px]">

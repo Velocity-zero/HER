@@ -20,11 +20,6 @@ interface RepetitionCheck {
 
 // ── Detection ──────────────────────────────────────────────
 
-const COMMON_OPENINGS = [
-  "oh", "hey", "haha", "hmm", "okay", "honestly",
-  "i", "that", "so", "well", "aww", "wait",
-];
-
 /** Extract first 2 words, lowercased, as opening fingerprint */
 function getOpening(text: string): string {
   return text.trim().split(/\s+/).slice(0, 2).join(" ").toLowerCase().replace(/[.,!?]+$/, "");

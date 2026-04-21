@@ -3,6 +3,7 @@ import { ChatRequest, ChatResponse } from "@/lib/types";
 import { buildPayload } from "@/lib/conversation";
 import { generateReply, generateStreamReply } from "@/lib/provider";
 import { validateApiRequest, checkBodySize, MAX_MESSAGES_COUNT, MAX_MESSAGE_LENGTH } from "@/lib/api-auth";
+import { debug } from "@/lib/debug";
 
 /**
  * POST /api/chat
@@ -100,8 +101,8 @@ export async function POST(req: NextRequest) {
       userTimezone: body.userTimezone,
     });
 
-    console.log(
-      `[HER API] ${body.messages.length} messages → ${payload.length} payload items (mode: ${body.mode || "default"}, rapport: ${body.rapportLevel ?? 0}, memory: ${body.memoryContext ? "yes" : "no"}, adaptiveMode: ${body.responseModeInstruction ? "yes" : "no"}, tz: ${body.userTimezone || "unknown"}, stream: ${wantsStream})`
+    debug(
+      `[HER API] ${body.messages.length} msgs → ${payload.length} payload (stream: ${wantsStream})`
     );
 
     // ── Streaming path ──

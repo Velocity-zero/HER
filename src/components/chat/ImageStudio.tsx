@@ -374,6 +374,7 @@ export default function ImageStudio({ onGenerate, disabled = false, onClose, las
           <div className="mb-3.5">
             {sourceImage ? (
               <div className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element -- base64 data URL, no remote optimization possible */}
                 <img
                   src={sourceImage}
                   alt="Source image"

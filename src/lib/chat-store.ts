@@ -129,7 +129,8 @@ export function saveMessages(messages: Message[], immediate = false): void {
       if (error instanceof DOMException && error.name === "QuotaExceededError") {
         console.warn("[HER store] Quota exceeded — saving text-only messages.");
         try {
-          const textOnly = messages.map(({ image, ...rest }) => rest);
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars -- intentionally discarding the image field
+          const textOnly = messages.map(({ image: _image, ...rest }) => rest);
           const session: ChatSession & { _v: number } = {
             id: _cachedSessionId ?? generateId(),
             messages: textOnly as Message[],

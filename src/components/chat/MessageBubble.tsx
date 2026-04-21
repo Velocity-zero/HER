@@ -292,7 +292,7 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
           }}
         >
           <div className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors duration-100 ${
-            swipeTriggeredRef.current ? "bg-her-accent/20 text-her-accent/70" : "bg-her-surface/80 text-her-text-muted/40"
+            swipeX >= SWIPE_THRESHOLD ? "bg-her-accent/20 text-her-accent/70" : "bg-her-surface/80 text-her-text-muted/40"
           }`}>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-4 w-4 -scale-x-100">
               <path d="M1.75 1.002a.75.75 0 1 0 0 1.5h6.5a3.75 3.75 0 0 1 0 7.5h-3.44l1.72-1.72a.75.75 0 0 0-1.06-1.06l-3 3a.75.75 0 0 0 0 1.06l3 3a.75.75 0 1 0 1.06-1.06l-1.72-1.72h3.44a5.25 5.25 0 0 0 0-10.5h-6.5Z" />
@@ -388,6 +388,7 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
 
         {/* Image — user-attached or AI-generated */}
         {hasImage && (
+          // eslint-disable-next-line @next/next/no-img-element -- mixed sources (base64 from generation, https from Storage); next/image loader config not worth the complexity here
           <img
             src={message.image}
             alt={isGeneratedImage ? "Generated image" : "Shared photo"}

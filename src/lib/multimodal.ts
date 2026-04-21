@@ -213,7 +213,7 @@ RULES:
 
     if (result && result.trim().length > 10) {
       // Light cleanup
-      let cleaned = result
+      const cleaned = result
         .replace(/^["'"'"]+|["'"'"]+$/g, "")
         .replace(/[*_#`~>]/g, "")
         .trim();

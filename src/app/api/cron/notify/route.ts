@@ -26,6 +26,7 @@ import { getNotificationSettings, isQuietHours } from "@/lib/notification-settin
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { sendPushNotification } from "@/lib/push";
 import { getUserMemories, formatMemoryForPrompt } from "@/lib/memory";
+import { debug } from "@/lib/debug";
 
 export const dynamic = "force-dynamic";
 
@@ -124,7 +125,7 @@ export async function GET(req: NextRequest) {
       await storeNotificationMessage(event.id, messageText);
       processed++;
 
-      console.log(`[HER Cron] Sent ${event.type} to ${event.user_id}: "${messageText.slice(0, 50)}"`);
+      debug(`[HER Cron] Sent ${event.type} (${messageText.length} chars)`);
     } catch (err) {
       console.error(`[HER Cron] Error processing event ${event.id}:`, err);
     }
