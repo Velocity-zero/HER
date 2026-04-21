@@ -21,6 +21,9 @@ import {
   getActiveConversationId,
   listUserConversations,
   getConversationMessages,
+  getOlderMessages,
+  countConversationMessages,
+  MESSAGES_PAGE_SIZE,
   updateConversationTitle,
   deleteConversation,
   getUserRapportStats,
@@ -248,6 +251,8 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
   const [loadingConvo, setLoadingConvo] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
   // Prevent double-sends
   const sendingRef = useRef(false);
@@ -476,14 +481,21 @@ export default function ChatPage() {
 
     setLoadingConvo(true);
     sendingRef.current = false;
-    const dbMessages = await getConversationMessages(conversationId);
+
+    // Fetch latest page + total count in parallel for fast initial render
+    const [dbMessages, total] = await Promise.all([
+      getConversationMessages(conversationId),
+      countConversationMessages(conversationId),
+    ]);
 
     if (dbMessages.length > 0) {
       const uiMessages: Message[] = dbMessages.map(dbMessageToUiMessage);
       setMessages(uiMessages);
+      setHasMoreMessages(total > dbMessages.length);
     } else {
       // Conversation exists but has no messages — show greeting
       setMessages([createGreeting(surfaceCopyRef.current.greeting)]);
+      setHasMoreMessages(false);
     }
 
     setActiveConvoId(conversationId);
@@ -518,6 +530,33 @@ export default function ChatPage() {
     const convos = await listUserConversations(user.id);
     setConversations(convos);
   }, [isAuthenticated, user?.id]);
+
+  // ── Load older messages (pagination) ──
+  const handleLoadOlder = useCallback(async () => {
+    if (!activeConvoId || loadingOlder || !hasMoreMessages) return;
+    const current = messagesRef.current;
+    // Find the oldest non-greeting timestamp
+    const oldest = current.find((m) => m.id !== "greeting");
+    if (!oldest) return;
+
+    setLoadingOlder(true);
+    try {
+      const older = await getOlderMessages(
+        activeConvoId,
+        new Date(oldest.timestamp).toISOString()
+      );
+      if (older.length > 0) {
+        const olderUi: Message[] = older.map(dbMessageToUiMessage);
+        setMessages([...olderUi, ...current]);
+        // If we got fewer than a full page, we've hit the start
+        if (older.length < MESSAGES_PAGE_SIZE) setHasMoreMessages(false);
+      } else {
+        setHasMoreMessages(false);
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [activeConvoId, loadingOlder, hasMoreMessages]);
 
   // Pool that depends on session surface copy — memoized
   const LOCAL_IMAGE = useMemo(
@@ -1376,6 +1415,20 @@ export default function ChatPage() {
               openingLine={surfaceCopy.openingLine}
               openingSubtext={surfaceCopy.openingSubtext}
             />
+          )}
+
+          {/* Load older messages — only shown when paginated history exists */}
+          {hasMoreMessages && (
+            <div className="flex justify-center pt-2 pb-4">
+              <button
+                type="button"
+                onClick={handleLoadOlder}
+                disabled={loadingOlder}
+                className="rounded-full border border-her-border/25 bg-her-surface/40 px-4 py-1.5 text-[11px] tracking-[0.06em] text-her-text-muted/55 transition-all duration-300 hover:border-her-accent/25 hover:bg-her-accent/[0.04] hover:text-her-text-muted/75 active:scale-[0.96] disabled:opacity-40 disabled:cursor-default sm:text-[12px]"
+              >
+                {loadingOlder ? "loading…" : "load older messages"}
+              </button>
+            </div>
           )}
 
           {/* Messages */}

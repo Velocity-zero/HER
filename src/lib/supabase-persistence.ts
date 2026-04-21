@@ -313,11 +313,59 @@ export interface DbMessage {
 }
 
 /**
- * Fetch all messages for a given conversation, oldest-first.
+ * Default page size for conversation message loading.
+ * Keeps initial render light on mobile devices.
+ */
+export const MESSAGES_PAGE_SIZE = 50;
+
+/**
+ * Fetch the most recent N messages for a conversation, oldest-first.
  * Returns [] on failure.
+ *
+ * @param conversationId — the conversation to fetch from
+ * @param limit          — max number of messages (default 50)
  */
 export async function getConversationMessages(
-  conversationId: string
+  conversationId: string,
+  limit: number = MESSAGES_PAGE_SIZE
+): Promise<DbMessage[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    // Fetch newest N descending, then reverse to get chronological order.
+    // This is much faster than fetching all + slicing on the client.
+    const { data, error } = await client
+      .from("messages")
+      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.warn("[HER DB] Get messages failed:", error.message);
+      return [];
+    }
+
+    return ((data ?? []) as DbMessage[]).reverse();
+  } catch (err) {
+    console.warn("[HER DB] Get messages exception:", err);
+    return [];
+  }
+}
+
+/**
+ * Fetch messages older than a given timestamp, oldest-first.
+ * Used for "load older messages" pagination.
+ *
+ * @param conversationId — the conversation to fetch from
+ * @param beforeIso      — ISO timestamp; messages strictly older are returned
+ * @param limit          — max number of messages (default 50)
+ */
+export async function getOlderMessages(
+  conversationId: string,
+  beforeIso: string,
+  limit: number = MESSAGES_PAGE_SIZE
 ): Promise<DbMessage[]> {
   const client = getSupabaseClient();
   if (!client) return [];
@@ -327,17 +375,46 @@ export async function getConversationMessages(
       .from("messages")
       .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions")
       .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true });
+      .lt("created_at", beforeIso)
+      .order("created_at", { ascending: false })
+      .limit(limit);
 
     if (error) {
-      console.warn("[HER DB] Get messages failed:", error.message);
+      console.warn("[HER DB] Get older messages failed:", error.message);
       return [];
     }
 
-    return (data ?? []) as DbMessage[];
+    return ((data ?? []) as DbMessage[]).reverse();
   } catch (err) {
-    console.warn("[HER DB] Get messages exception:", err);
+    console.warn("[HER DB] Get older messages exception:", err);
     return [];
+  }
+}
+
+/**
+ * Count total messages in a conversation. Used to know if "load older" is available.
+ */
+export async function countConversationMessages(
+  conversationId: string
+): Promise<number> {
+  const client = getSupabaseClient();
+  if (!client) return 0;
+
+  try {
+    const { count, error } = await client
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", conversationId);
+
+    if (error) {
+      console.warn("[HER DB] Count messages failed:", error.message);
+      return 0;
+    }
+
+    return count ?? 0;
+  } catch (err) {
+    console.warn("[HER DB] Count messages exception:", err);
+    return 0;
   }
 }
 
