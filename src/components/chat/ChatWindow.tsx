@@ -82,6 +82,11 @@ export default function ChatWindow<T>({
   }, [forceScrollTrigger]);
 
   // ── Pin to bottom during streaming if user is already there ──
+  // Note: we do NOT gate this on `atBottomRef.current` because virtuoso's
+  // "at bottom" signal can briefly flip false as the streaming message grows
+  // taller than the viewport, which would otherwise leave HER's reply hidden
+  // below the fold. `atBottomThreshold` (set on <Virtuoso/> below) handles
+  // the real "user scrolled away" case via virtuoso's own followOutput.
   useEffect(() => {
     if (scrollTrigger === undefined) return;
     if (!atBottomRef.current) return;
@@ -92,11 +97,14 @@ export default function ChatWindow<T>({
     });
   }, [scrollTrigger]);
 
-  // ── Top-reached handler with throttle ──
+  // ── Top-reached handler with light throttle ──
+  // Parent already guards re-entry via its own `loadingOlder` flag, so this
+  // throttle is just to coalesce rapid scroll wheel events — not to gate
+  // load attempts. 250ms keeps subsequent scroll-to-top flicks responsive.
   const handleStartReached = useCallback(() => {
     if (!onScrollNearTop) return;
     const now = Date.now();
-    if (now - lastTopFireRef.current < 800) return;
+    if (now - lastTopFireRef.current < 250) return;
     lastTopFireRef.current = now;
     onScrollNearTop();
   }, [onScrollNearTop]);
@@ -179,10 +187,11 @@ export default function ChatWindow<T>({
         initialTopMostItemIndex={Math.max(items.length - 1, 0)}
         followOutput="auto"
         atBottomStateChange={handleAtBottomChange}
+        atBottomThreshold={150}
         startReached={handleStartReached}
         itemContent={renderItemWrapped}
         components={{ Header: HeaderComp, Footer: FooterComp }}
-        increaseViewportBy={{ top: 400, bottom: 400 }}
+        increaseViewportBy={{ top: 600, bottom: 400 }}
         style={{ height: "100%" }}
       />
     </div>
