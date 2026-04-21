@@ -14,11 +14,13 @@ import { useAuth } from "@/components/AuthProvider";
 interface ChatHeaderProps {
   onClear?: () => void;
   onHistoryOpen?: () => void;
+  /** Opens the magic-link sign-in modal. Shown for guests in place of the history icon. */
+  onSignInClick?: () => void;
   /** Kept for API compatibility; no longer used by the header itself. */
   accessToken?: string | null;
 }
 
-export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) {
+export default function ChatHeader({ onClear, onHistoryOpen, onSignInClick }: ChatHeaderProps) {
   const [confirming, setConfirming] = useState(false);
   const { isAuthenticated, loading } = useAuth();
 
@@ -61,6 +63,14 @@ export default function ChatHeader({ onClear, onHistoryOpen }: ChatHeaderProps) 
                 clipRule="evenodd"
               />
             </svg>
+          </button>
+        ) : !loading && !isAuthenticated && onSignInClick ? (
+          <button
+            onClick={onSignInClick}
+            className="min-h-[44px] rounded-full px-3 py-1 text-[10px] tracking-[0.1em] text-her-text-muted/40 transition-colors duration-300 hover:text-her-text-muted/65 active:text-her-text-muted/55 focus-visible:outline-none focus-visible:text-her-text-muted/65"
+            aria-label="Sign in"
+          >
+            sign in
           </button>
         ) : (
           // Reserve space so the center brand stays optically centered for guests too
