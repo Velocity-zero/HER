@@ -37,7 +37,7 @@ import { markConversationSeen, getUnreadConversationIds } from "@/lib/conversati
 import { debug } from "@/lib/debug";
 import { useAuth } from "@/components/AuthProvider";
 import ChatHeader from "@/components/chat/ChatHeader";
-import ChatWindow from "@/components/chat/ChatWindow";
+import ChatWindow, { INITIAL_TOP_INDEX } from "@/components/chat/ChatWindow";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
@@ -265,6 +265,13 @@ export default function ChatPage() {
   const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
   const [loadingConvo, setLoadingConvo] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  /**
+   * How many messages have been prepended via "load older" since the
+   * conversation was opened. Used to compute Virtuoso's `firstItemIndex`
+   * so the user's scroll position stays anchored when older content lands.
+   * Reset to 0 on conversation switch, new chat, or app load.
+   */
+  const [prependedCount, setPrependedCount] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
   // Prevent double-sends
@@ -529,6 +536,8 @@ export default function ChatPage() {
       setMessages([createGreeting(surfaceCopyRef.current.greeting)]);
       setHasMoreMessages(false);
     }
+    // Fresh conversation — no prior prepend history
+    setPrependedCount(0);
 
     setActiveConvoId(conversationId);
     setActiveConversationId(conversationId);
@@ -639,6 +648,8 @@ export default function ChatPage() {
       if (older.length > 0) {
         const olderUi: Message[] = older.map(dbMessageToUiMessage);
         setMessages([...olderUi, ...current]);
+        // Bump prepend count so Virtuoso keeps the scroll anchor stable
+        setPrependedCount((c) => c + olderUi.length);
         // If we got fewer than a full page, we've hit the start
         if (older.length < MESSAGES_PAGE_SIZE) setHasMoreMessages(false);
       } else {
@@ -1374,6 +1385,7 @@ export default function ChatPage() {
     // Reset pagination — a fresh chat has no older history to load.
     setHasMoreMessages(false);
     setLoadingOlder(false);
+    setPrependedCount(0);
 
     setError(null);
     setIsTyping(false);
@@ -1509,101 +1521,107 @@ export default function ChatPage() {
         </div>
       )}
 
-      <ChatWindow
+      <ChatWindow<Message>
+        key={sessionKey}
+        items={messages}
+        itemKey={(m) => m.id}
+        firstItemIndex={INITIAL_TOP_INDEX - prependedCount}
         scrollTrigger={scrollTrigger}
         forceScrollTrigger={forceScrollTrigger}
         onScrollNearTop={hasMoreMessages && !loadingOlder ? handleLoadOlder : undefined}
-        prependAnchor={messages.length}
-      >
-        <div key={sessionKey} className="animate-session-fade">
-          {/* Empty state — shown when conversation only has the greeting */}
-          {!isTyping && messages.length === 1 && messages[0].id === "greeting" && (
-            <EmptyState
-              onSuggestion={setPrefillText}
-              suggestions={surfaceCopy.starterPrompts}
-              openingLine={surfaceCopy.openingLine}
-              openingSubtext={surfaceCopy.openingSubtext}
-            />
-          )}
+        renderItem={(msg, i) => {
+          const isGeneratedImage = !!msg.image && msg.role === "assistant" && !msg.imageLoading;
 
-          {/* Subtle loading indicator while older messages stream in — no button */}
-          {loadingOlder && (
-            <div className="flex justify-center py-3" aria-live="polite">
-              <div className="animate-presence-breathe h-1.5 w-1.5 rounded-full bg-her-accent/35" />
-              <span className="sr-only">Loading older messages</span>
-            </div>
-          )}
-
-          {/* Messages */}
-          {messages.map((msg, i) => {
-            const isGeneratedImage = !!msg.image && msg.role === "assistant" && !msg.imageLoading;
-
-            // For generated images, find the preceding user prompt for copy/reuse
-            let msgImageActions: {
-              onDownload?: (imageUrl: string) => void;
-              onCopyPrompt?: () => void;
-              onReusePrompt?: () => void;
-              onUseAsEditSource?: (imageUrl: string) => void;
-            } | undefined;
-            if (isGeneratedImage) {
-              // Walk backwards to find the user message that triggered this generation
-              let userPrompt = "";
-              for (let j = i - 1; j >= 0; j--) {
-                if (messages[j].role === "user") {
-                  userPrompt = messages[j].content.replace(/^[🎨✏️]\s*/, "").trim();
-                  break;
-                }
+          // For generated images, find the preceding user prompt for copy/reuse
+          let msgImageActions:
+            | {
+                onDownload?: (imageUrl: string) => void;
+                onCopyPrompt?: () => void;
+                onReusePrompt?: () => void;
+                onUseAsEditSource?: (imageUrl: string) => void;
               }
-              msgImageActions = {
-                onDownload: handleImageDownload,
-                onCopyPrompt: userPrompt ? () => handleCopyPrompt(userPrompt) : undefined,
-                onReusePrompt: userPrompt ? () => handleReusePrompt(userPrompt) : undefined,
-                onUseAsEditSource: handleUseAsEditSource,
-              };
+            | undefined;
+          if (isGeneratedImage) {
+            // Walk backwards to find the user message that triggered this generation
+            let userPrompt = "";
+            for (let j = i - 1; j >= 0; j--) {
+              if (messages[j].role === "user") {
+                userPrompt = messages[j].content.replace(/^[🎨✏️]\s*/, "").trim();
+                break;
+              }
             }
+            msgImageActions = {
+              onDownload: handleImageDownload,
+              onCopyPrompt: userPrompt ? () => handleCopyPrompt(userPrompt) : undefined,
+              onReusePrompt: userPrompt ? () => handleReusePrompt(userPrompt) : undefined,
+              onUseAsEditSource: handleUseAsEditSource,
+            };
+          }
 
-            return (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                index={i}
-                showTimestamp={!isStreaming && (i === 0 || i === messages.length - 1)}
-                isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
-                imageActions={msgImageActions}
-                thinkingLabel={surfaceCopy.thinkingLabel}
-                onReply={handleReply}
-                onReaction={handleReaction}
-              />
-            );
-          })}
-        </div>
-
-        {/* Typing indicator */}
-        {isTyping && <TypingIndicator label={surfaceCopy.thinkingLabel} />}
-
-        {/* Error toast */}
-        {error && (
-          <div role="alert" aria-live="assertive" className="animate-fade-in mb-5 flex flex-col items-center gap-2 px-3 sm:px-0">
-            <button
-              onClick={dismissError}
-              aria-label="Dismiss error"
-              className="min-h-[44px] rounded-[18px] bg-her-accent/[0.05] px-5 py-3 text-[12px] leading-[1.5] text-her-accent/70 shadow-[0_1px_4px_rgba(180,140,110,0.04)] transition-colors duration-300 hover:bg-her-accent/[0.09] sm:px-6 sm:text-[13px]"
-            >
-              {error}
-              <span className="ml-2.5 text-her-accent/25">✕</span>
-            </button>
-            {retryContent && (
-              <button
-                onClick={handleRetry}
-                aria-label="Retry sending message"
-                className="rounded-full border border-her-accent/15 px-4 py-1.5 text-[11px] tracking-[0.04em] text-her-accent/55 transition-all duration-200 hover:bg-her-accent/[0.06] hover:text-her-accent/75 active:scale-[0.96]"
-              >
-                try again
-              </button>
+          return (
+            <MessageBubble
+              message={msg}
+              index={i}
+              showTimestamp={!isStreaming && (i === 0 || i === messages.length - 1)}
+              isStreaming={isStreaming && i === messages.length - 1 && msg.role === "assistant"}
+              imageActions={msgImageActions}
+              thinkingLabel={surfaceCopy.thinkingLabel}
+              onReply={handleReply}
+              onReaction={handleReaction}
+            />
+          );
+        }}
+        header={
+          <>
+            {/* Subtle loading indicator while older messages stream in */}
+            {loadingOlder && (
+              <div className="flex justify-center py-3" aria-live="polite">
+                <div className="animate-presence-breathe h-1.5 w-1.5 rounded-full bg-her-accent/35" />
+                <span className="sr-only">Loading older messages</span>
+              </div>
             )}
-          </div>
-        )}
-      </ChatWindow>
+
+            {/* Empty state — shown when conversation only has the greeting */}
+            {!isTyping && messages.length === 1 && messages[0].id === "greeting" && (
+              <EmptyState
+                onSuggestion={setPrefillText}
+                suggestions={surfaceCopy.starterPrompts}
+                openingLine={surfaceCopy.openingLine}
+                openingSubtext={surfaceCopy.openingSubtext}
+              />
+            )}
+          </>
+        }
+        footer={
+          <>
+            {/* Typing indicator */}
+            {isTyping && <TypingIndicator label={surfaceCopy.thinkingLabel} />}
+
+            {/* Error toast */}
+            {error && (
+              <div role="alert" aria-live="assertive" className="animate-fade-in mb-5 flex flex-col items-center gap-2 px-3 sm:px-0">
+                <button
+                  onClick={dismissError}
+                  aria-label="Dismiss error"
+                  className="min-h-[44px] rounded-[18px] bg-her-accent/[0.05] px-5 py-3 text-[12px] leading-[1.5] text-her-accent/70 shadow-[0_1px_4px_rgba(180,140,110,0.04)] transition-colors duration-300 hover:bg-her-accent/[0.09] sm:px-6 sm:text-[13px]"
+                >
+                  {error}
+                  <span className="ml-2.5 text-her-accent/25">✕</span>
+                </button>
+                {retryContent && (
+                  <button
+                    onClick={handleRetry}
+                    aria-label="Retry sending message"
+                    className="rounded-full border border-her-accent/15 px-4 py-1.5 text-[11px] tracking-[0.04em] text-her-accent/55 transition-all duration-200 hover:bg-her-accent/[0.06] hover:text-her-accent/75 active:scale-[0.96]"
+                  >
+                    try again
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        }
+      />
 
       {/* Image Studio — slides in above the composer */}
       {studioOpen && (

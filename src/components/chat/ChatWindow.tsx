@@ -1,80 +1,120 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { useEffect, useRef, useCallback } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 /**
- * ChatWindow — Scrollable conversation container.
- * Messages float near the bottom, creating an atmospheric
- * calm space above. Like a conversation happening in
- * a warm, quiet room with high ceilings.
+ * ChatWindow — Virtualized scrollable conversation container.
+ *
+ * Why virtualization: long conversations (hundreds of messages) used to
+ * crash mobile WebView with "this page couldn't load" because every
+ * MessageBubble carried touch listeners, refs, and gesture state.
+ * react-virtuoso renders only the ~20 messages visible in the viewport
+ * (plus a small overscan), so memory stays constant no matter how far
+ * back the user scrolls.
+ *
+ * Anchor preservation on prepend: we use Virtuoso's `firstItemIndex`
+ * trick — start with a large constant base, decrement by the number of
+ * messages prepended each time. Virtuoso uses this signal to keep the
+ * user's scroll position stable when older content lands above.
  */
 
-interface ChatWindowProps {
-  children?: React.ReactNode;
-  autoScroll?: boolean;
-  /** Changing this value triggers a scroll-to-bottom check (e.g. increment during streaming) */
-  scrollTrigger?: number;
-  /** When > 0, forces an unconditional scroll (ignores near-bottom check). Increment to trigger. */
-  forceScrollTrigger?: number;
+interface ChatWindowProps<T> {
+  /** The full list of items to render (messages). */
+  items: T[];
+  /** Stable unique key per item. */
+  itemKey: (item: T) => string;
+  /** Render function for a single item. */
+  renderItem: (item: T, index: number) => React.ReactNode;
   /**
-   * Called when the user scrolls near the top of the conversation.
-   * Use this to load older messages. The window automatically preserves
-   * the user's scroll position after the new content is prepended, so
-   * they stay anchored on the same message they were reading.
+   * `firstItemIndex` for Virtuoso's anchor preservation when prepending
+   * older messages. Parent should track a `prependedCount` and pass
+   * `INITIAL_TOP_INDEX - prependedCount`.
+   * Defaults to INITIAL_TOP_INDEX (no prepend yet).
    */
+  firstItemIndex?: number;
+  /** Fired when the user scrolls to (or near) the top of the list. */
   onScrollNearTop?: () => void;
-  /**
-   * A counter the parent increments JUST BEFORE prepending older messages.
-   * The window snapshots scrollHeight so it can restore scrollTop after the
-   * prepend completes — keeps the user anchored on what they were reading.
-   */
-  prependAnchor?: number;
+  /** Optional fixed header (empty state, breathing dot, etc.). */
+  header?: React.ReactNode;
+  /** Optional fixed footer (typing indicator, error toast). */
+  footer?: React.ReactNode;
+  /** Increment to force an unconditional scroll-to-bottom (sent message, switched conversation). */
+  forceScrollTrigger?: number;
+  /** Increment during streaming to keep the bottom pinned if the user is near the bottom. */
+  scrollTrigger?: number;
 }
 
-export default function ChatWindow({
-  children,
-  autoScroll = true,
-  scrollTrigger,
-  forceScrollTrigger,
+/**
+ * Large base for `firstItemIndex` — Virtuoso requires this for anchor
+ * preservation on prepend. Parent decrements from this value by the
+ * number of older messages prepended via "load older".
+ */
+export const INITIAL_TOP_INDEX = 1_000_000;
+
+export default function ChatWindow<T>({
+  items,
+  itemKey,
+  renderItem,
+  firstItemIndex = INITIAL_TOP_INDEX,
   onScrollNearTop,
-  prependAnchor,
-}: ChatWindowProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  /** Snapshot taken when prependAnchor changes; consumed after the next render. */
-  const preprendSnapshot = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
-  /** Throttle: don't fire onScrollNearTop more than once per 800ms */
+  header,
+  footer,
+  forceScrollTrigger,
+  scrollTrigger,
+}: ChatWindowProps<T>) {
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  /** Whether the user is currently near the bottom of the list. */
+  const atBottomRef = useRef(true);
+  /** Throttle: don't fire onScrollNearTop more than once per 800ms. */
   const lastTopFireRef = useRef<number>(0);
 
-  /** Scroll to bottom — optionally force (skip near-bottom check) */
-  const scrollToBottom = useCallback((force = false) => {
-    if (!autoScroll || !containerRef.current || !bottomRef.current) return;
+  // ── Force scroll on demand (sent message, switched conversation) ──
+  useEffect(() => {
+    if (!forceScrollTrigger) return;
+    requestAnimationFrame(() => {
+      virtuosoRef.current?.scrollToIndex({
+        index: "LAST",
+        align: "end",
+        behavior: "auto",
+      });
+    });
+  }, [forceScrollTrigger]);
 
-    const el = containerRef.current;
+  // ── Pin to bottom during streaming if user is already there ──
+  useEffect(() => {
+    if (scrollTrigger === undefined) return;
+    if (!atBottomRef.current) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: "LAST",
+      align: "end",
+      behavior: "auto",
+    });
+  }, [scrollTrigger]);
 
-    if (!force) {
-      // Only auto-scroll if user is near the bottom (within 200px)
-      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
-      if (!isNearBottom) return;
-    }
+  // ── Top-reached handler with throttle ──
+  const handleStartReached = useCallback(() => {
+    if (!onScrollNearTop) return;
+    const now = Date.now();
+    if (now - lastTopFireRef.current < 800) return;
+    lastTopFireRef.current = now;
+    onScrollNearTop();
+  }, [onScrollNearTop]);
 
-    // Use instant during rapid updates (streaming), smooth for single events
-    bottomRef.current.scrollIntoView({ behavior: "instant", block: "end" });
-  }, [autoScroll]);
+  // ── Track near-bottom state for streaming auto-scroll ──
+  const handleAtBottomChange = useCallback((bottom: boolean) => {
+    atBottomRef.current = bottom;
+  }, []);
 
   /**
    * Clear text selection when tapping on whitespace / non-text areas.
-   * On mobile, `user-select: none` on the body prevents new selections
-   * but doesn't clear an existing one when you tap away.
-   * This handler bridges that gap — tapping anywhere outside selectable
-   * text or interactive elements clears the selection naturally.
+   * Mirrors the prior ChatWindow behavior so mobile selection still
+   * dismisses naturally when the user taps outside selectable text.
    */
   const handleContainerClick = useCallback((e: React.MouseEvent) => {
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) return; // no active selection — nothing to do
-
+    if (!sel || sel.isCollapsed) return;
     const target = e.target as HTMLElement;
-    // Don't clear if the user tapped on selectable text or an interactive element
     if (
       target.closest(".msg-text-selectable") ||
       target.closest("button") ||
@@ -82,72 +122,69 @@ export default function ChatWindow({
       target.closest("input") ||
       target.closest("textarea")
     ) return;
-
     sel.removeAllRanges();
   }, []);
 
-  /** Detect scroll-to-top → snapshot, then trigger onScrollNearTop (throttled) */
-  const handleScroll = useCallback(() => {
-    if (!onScrollNearTop || !containerRef.current) return;
-    const el = containerRef.current;
-    // Trigger when user is within 80px of the top
-    if (el.scrollTop < 80) {
-      const now = Date.now();
-      if (now - lastTopFireRef.current < 800) return;
-      lastTopFireRef.current = now;
-      // Snapshot BEFORE the parent prepends — so we can restore anchor after.
-      preprendSnapshot.current = {
-        scrollHeight: el.scrollHeight,
-        scrollTop: el.scrollTop,
-      };
-      onScrollNearTop();
-    }
-  }, [onScrollNearTop]);
+  /**
+   * Centered conversation column wrapper applied to every item.
+   * Matches the prior `mx-auto w-full max-w-[640px] px-3 …` styling
+   * so message bubbles keep their reading-friendly column width.
+   */
+  const renderItemWrapped = useCallback(
+    (_index: number, item: T) => (
+      <div
+        key={itemKey(item)}
+        className="mx-auto w-full max-w-[640px] px-3 sm:px-5 md:px-6"
+      >
+        {renderItem(item, _index - firstItemIndex)}
+      </div>
+    ),
+    [itemKey, renderItem, firstItemIndex]
+  );
 
-  // After children render, if we have a pending snapshot AND scrollHeight grew,
-  // restore scrollTop so the user stays anchored on the same message.
-  // `prependAnchor` is the parent's signal that new content was just prepended.
-  useLayoutEffect(() => {
-    const snap = preprendSnapshot.current;
-    if (!snap || !containerRef.current) return;
-    const el = containerRef.current;
-    const delta = el.scrollHeight - snap.scrollHeight;
-    if (delta > 0) {
-      el.scrollTop = snap.scrollTop + delta;
-      preprendSnapshot.current = null;
-    }
-    // If delta <= 0, the prepend hasn't landed yet — keep waiting.
-  }, [prependAnchor]);
+  // Header and footer are also constrained to the same column.
+  const HeaderComp = useCallback(
+    () =>
+      header ? (
+        <div className="mx-auto w-full max-w-[640px] px-3 pt-3 sm:px-5 sm:pt-6 md:px-6">
+          {header}
+        </div>
+      ) : (
+        <div className="pt-3 sm:pt-6" />
+      ),
+    [header]
+  );
 
-  // Scroll when scrollTrigger changes (streaming chunks) — conditional
-  useEffect(() => {
-    scrollToBottom(false);
-  }, [scrollTrigger, scrollToBottom]);
-
-  // Force scroll when forceScrollTrigger changes (new message sent/received)
-  useEffect(() => {
-    if (!forceScrollTrigger) return;
-    // Use rAF to let the DOM update first, then scroll
-    requestAnimationFrame(() => {
-      scrollToBottom(true);
-    });
-  }, [forceScrollTrigger, scrollToBottom]);
+  const FooterComp = useCallback(
+    () =>
+      footer ? (
+        <div className="mx-auto w-full max-w-[640px] px-3 pb-4 sm:px-5 sm:pb-5 md:px-6">
+          {footer}
+        </div>
+      ) : (
+        <div className="pb-4 sm:pb-5" />
+      ),
+    [footer]
+  );
 
   return (
     <div
-      ref={containerRef}
-      className="chat-scroll flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto"
+      className="chat-scroll flex min-h-0 flex-1 flex-col"
       onClick={handleContainerClick}
-      onScroll={handleScroll}
     >
-      {/* Push messages toward the bottom — atmospheric empty space above */}
-      <div className="flex-1" />
-
-      {/* Centered conversation column */}
-      <div className="mx-auto w-full max-w-[640px] px-3 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pt-6 md:px-6">
-        {children}
-        <div ref={bottomRef} />
-      </div>
+      <Virtuoso
+        ref={virtuosoRef}
+        data={items}
+        firstItemIndex={firstItemIndex}
+        initialTopMostItemIndex={Math.max(items.length - 1, 0)}
+        followOutput="auto"
+        atBottomStateChange={handleAtBottomChange}
+        startReached={handleStartReached}
+        itemContent={renderItemWrapped}
+        components={{ Header: HeaderComp, Footer: FooterComp }}
+        increaseViewportBy={{ top: 400, bottom: 400 }}
+        style={{ height: "100%" }}
+      />
     </div>
   );
 }
