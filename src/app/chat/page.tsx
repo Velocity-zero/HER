@@ -45,6 +45,7 @@ import HistoryDrawer from "@/components/chat/HistoryDrawer";
 import EmptyState from "@/components/chat/EmptyState";
 import ImageStudio from "@/components/chat/ImageStudio";
 import ModeSelector from "@/components/chat/ModeSelector";
+import AuthModal from "@/components/AuthModal";
 import type { ImageStudioMode, ConversationMode } from "@/lib/types";
 
 /**
@@ -262,6 +263,7 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
   const [loadingConvo, setLoadingConvo] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
@@ -1486,6 +1488,8 @@ export default function ChatPage() {
   // ── Stable callback refs for JSX (avoid inline arrow re-creation) ──
   const openHistory = useCallback(() => setHistoryOpen(true), []);
   const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  const openAuth = useCallback(() => setAuthOpen(true), []);
+  const closeAuth = useCallback(() => setAuthOpen(false), []);
   const closeStudio = useCallback(() => setStudioOpen(false), []);
   const toggleStudio = useCallback(() => setStudioOpen((v) => !v), []);
   const consumePrefill = useCallback(() => setPrefillText(null), []);
@@ -1496,6 +1500,7 @@ export default function ChatPage() {
       <ChatHeader
         onClear={handleClear}
         onHistoryOpen={openHistory}
+        onSignInClick={openAuth}
         accessToken={accessTokenRef.current}
       />
 
@@ -1521,6 +1526,9 @@ export default function ChatPage() {
         unreadIds={unreadIds}
         accessToken={accessTokenRef.current}
       />
+
+      {/* Sign-in modal — opened from header for guests */}
+      <AuthModal open={authOpen} onClose={closeAuth} />
 
       {/* Loading overlay for conversation switch */}
       {loadingConvo && (
