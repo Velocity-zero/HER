@@ -47,6 +47,7 @@ import {
 import { debug, logHER, warnHER, errorHER } from "@/lib/debug";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   // ── Auth: verify cron secret ──

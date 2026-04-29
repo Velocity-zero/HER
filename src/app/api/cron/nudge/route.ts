@@ -30,6 +30,7 @@ import { sendPushNotification } from "@/lib/push";
 import { debug } from "@/lib/debug";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /** Minimum hours of inactivity before considering a nudge */
 const INACTIVITY_THRESHOLD_HOURS = 24;
