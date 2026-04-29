@@ -35,6 +35,7 @@ export default function NotificationSettings({
   });
   const [pushEnabled, setPushEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
 
   // Load settings
   /* eslint-disable react-hooks/set-state-in-effect -- fetches server settings + reads Notification.permission on modal open; both are external sources, not derivable. */
@@ -49,9 +50,18 @@ export default function NotificationSettings({
       })
       .catch(() => {});
 
-    // Check push permission
-    if ("Notification" in window) {
-      setPushEnabled(Notification.permission === "granted");
+    // Reflect real subscription state, not just OS permission. The toggle was
+    // previously based purely on Notification.permission which can be "granted"
+    // while no actual pushManager subscription exists (silent subscribe failure).
+    if ("Notification" in window && "serviceWorker" in navigator) {
+      if (Notification.permission !== "granted") {
+        setPushEnabled(false);
+      } else {
+        navigator.serviceWorker.ready
+          .then((reg) => reg.pushManager.getSubscription())
+          .then((sub) => setPushEnabled(!!sub?.endpoint))
+          .catch(() => setPushEnabled(false));
+      }
     }
   }, [open, accessToken]);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -80,27 +90,34 @@ export default function NotificationSettings({
   );
 
   const enablePush = useCallback(async () => {
-    if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
+    setPushError(null);
+
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setPushError("this browser doesn't support push");
+      return;
+    }
 
     const permission = await Notification.requestPermission();
-    if (permission !== "granted") return;
+    if (permission !== "granted") {
+      setPushError("permission denied");
+      return;
+    }
 
-    setPushEnabled(true);
-
-    // Get push subscription from service worker
-    const registration = await navigator.serviceWorker.ready;
     const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-
-    if (!vapidKey) return;
+    if (!vapidKey) {
+      setPushError("server misconfigured: VAPID key missing");
+      console.error("[HER] NEXT_PUBLIC_VAPID_PUBLIC_KEY missing at build time");
+      return;
+    }
 
     try {
+      const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: vapidKey,
       });
 
-      // Send subscription to server
-      await authFetch(
+      const res = await authFetch(
         "/api/notifications/subscribe",
         {
           method: "POST",
@@ -109,8 +126,19 @@ export default function NotificationSettings({
         },
         accessToken
       );
+
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        throw new Error(`subscribe API ${res.status}: ${detail.slice(0, 120)}`);
+      }
+
+      // Only flip the toggle after the subscription is actually saved server-side.
+      setPushEnabled(true);
     } catch (err) {
-      console.warn("[HER] Push subscription failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[HER] Push subscription failed:", err);
+      setPushError(msg);
+      return;
     }
 
     // Also save timezone while we're at it
@@ -175,6 +203,12 @@ export default function NotificationSettings({
             {pushEnabled && (
               <div className="mb-4 text-[11px] text-her-accent/50 tracking-[0.05em]">
                 ✓ push notifications active
+              </div>
+            )}
+
+            {pushError && (
+              <div className="mb-4 text-[11px] text-red-400/70 tracking-[0.05em] break-words">
+                push failed: {pushError}
               </div>
             )}
 
