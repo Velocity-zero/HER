@@ -33,6 +33,7 @@ import {
 import { computeRapportLevel, type RapportLevel } from "@/lib/rapport";
 import { detectUserTimezone } from "@/lib/notification-settings";
 import { uploadDataUrlToStorage, isDataUrl } from "@/lib/image-storage";
+import { routeImageType, type ImageType } from "@/lib/image-router";
 import { markConversationSeen, getUnreadConversationIds } from "@/lib/conversation-seen";
 import { debug } from "@/lib/debug";
 import { useAuth } from "@/components/AuthProvider";
@@ -145,6 +146,39 @@ function extractImagePrompt(text: string): string {
   if (prompt.length < 5) prompt = text.trim();
 
   return prompt;
+}
+
+/**
+ * Lightweight client-side image-type heuristic for explicit requests.
+ * Mirrors the LLM classifier's categories so the explicit path can route
+ * through the same `routeImageType()` source of truth.
+ *
+ * - self_portrait: "of yourself", "of you", "selfie", "how you look"
+ * - creative:     "art", "painting", "sketch", "illustration", "fantasy"
+ * - casual:       "casual", everyday objects (default for short prompts)
+ * - realistic_scene: everything else (landscapes, scenes)
+ */
+function detectExplicitImageType(originalText: string): ImageType {
+  const t = originalText.toLowerCase();
+
+  // Self-portrait: explicit reference to HER herself
+  if (
+    /\b(of\s+)?yourself\b/.test(t) ||
+    /\bselfie\b/.test(t) ||
+    /\b(picture|photo|image|portrait)\s+of\s+you\b/.test(t) ||
+    /\bhow\s+(you|do\s+you)\s+look\b/.test(t) ||
+    /\byour\s+(face|appearance|outfit)\b/.test(t)
+  ) {
+    return "self_portrait";
+  }
+
+  // Creative / artistic
+  if (/\b(painting|sketch|illustration|artwork|fantasy|abstract|surreal|anime|cartoon)\b/.test(t)) {
+    return "creative";
+  }
+
+  // Default: realistic scene (matches router fallback)
+  return "realistic_scene";
 }
 
 // ── Static microcopy pools (module-level — never recreated) ──
@@ -406,6 +440,9 @@ export default function ChatPage() {
   // conversations / starting a new chat / unmounting must cancel it so the
   // result never lands in the wrong conversation.
   const autoImageAbortRef = useRef<AbortController | null>(null);
+  // Same idea for the explicit /api/imagine path — we fire-and-forget so the
+  // user can keep chatting while HER "draws".
+  const explicitImageAbortRef = useRef<AbortController | null>(null);
 
   // ── Empty state / suggestion chip prefill ──
   const [prefillText, setPrefillText] = useState<string | null>(null);
@@ -635,6 +672,8 @@ export default function ChatPage() {
       abortRef.current = null;
       autoImageAbortRef.current?.abort();
       autoImageAbortRef.current = null;
+      explicitImageAbortRef.current?.abort();
+      explicitImageAbortRef.current = null;
     };
   }, []);
 
@@ -649,6 +688,8 @@ export default function ChatPage() {
     // Also kill any background auto-image — it belongs to the previous convo.
     autoImageAbortRef.current?.abort();
     autoImageAbortRef.current = null;
+    explicitImageAbortRef.current?.abort();
+    explicitImageAbortRef.current = null;
 
     setLoadingConvo(true);
     sendingRef.current = false;
@@ -953,73 +994,111 @@ export default function ChatPage() {
       return; // Exit early — vision path complete
     }
 
-    // ── Image generation branch ──
+    // ── Image generation branch (fire-and-forget) ──
+    // We deliberately don't block the chat UI on image generation. Instead:
+    //   1. Drop a placeholder message with `imageLoading: true`
+    //   2. Free sendingRef / isStreaming / isTyping IMMEDIATELY so the user
+    //      can keep chatting with HER while she "draws"
+    //   3. Run the fetch in the background; when it resolves, patch the
+    //      placeholder in place (or remove it on failure)
+    //   4. Convo-switch / unmount aborts via explicitImageAbortRef so the
+    //      result never lands in the wrong conversation
     if (isImageRequest(content)) {
       const imagePrompt = extractImagePrompt(content);
+      // Route through the same `routeImageType()` the auto pipeline uses,
+      // so model selection (incl. self-portrait → Kontext + reference) lives
+      // in one place. The server fills in the reference image when it sees
+      // mode: "edit" without an uploaded `image`.
+      const explicitType = detectExplicitImageType(content);
+      const route = routeImageType(explicitType);
 
-      try {
-        // Transition: show typing then show placeholder with imageLoading
-        setIsTyping(false);
-        setIsStreaming(true);
+      // Transition typing → placeholder
+      setIsTyping(false);
 
-        const herPlaceholder: Message = {
-          id: herMessageId,
-          role: "assistant",
-          content: pickRandom(LOCAL_IMAGE),
-          timestamp: Date.now(),
-          imageLoading: true,
-        };
-        setMessages((prev) => [...prev, herPlaceholder]);
-        setForceScrollTrigger((n) => n + 1);
+      const herPlaceholder: Message = {
+        id: herMessageId,
+        role: "assistant",
+        content: pickRandom(LOCAL_IMAGE),
+        timestamp: Date.now(),
+        imageLoading: true,
+      };
+      setMessages((prev) => [...prev, herPlaceholder]);
+      setForceScrollTrigger((n) => n + 1);
 
-        await humanDelay();
+      // Free the input lock immediately — image generation runs in background.
+      // The text-stream abortRef is also released since this turn isn't
+      // owning the streaming slot anymore.
+      sendingRef.current = false;
+      setIsStreaming(false);
+      if (abortRef.current === controller) abortRef.current = null;
 
-        const res = await authFetch("/api/imagine", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: imagePrompt }),
-          signal: controller.signal,
-        }, accessTokenRef.current);
+      // Background image generation with its own abort controller.
+      // Convo-switch / unmount cancels via explicitImageAbortRef.
+      explicitImageAbortRef.current?.abort();
+      const imgController = new AbortController();
+      explicitImageAbortRef.current = imgController;
+      const startingConvoId = convoId;
+      const stillOnSameConversation = () =>
+        getActiveConversationId() === startingConvoId;
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({ error: "Failed to generate image" }));
-          throw new Error(errData.error || pickRandom(LOCAL_IMAGE_FAIL));
+      (async () => {
+        try {
+          await humanDelay();
+          if (imgController.signal.aborted) return;
+
+          const res = await authFetch("/api/imagine", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: imagePrompt,
+              modelId: route.modelId,
+              mode: route.mode,
+              aspect_ratio: route.overrides.aspect_ratio,
+              steps: route.overrides.steps,
+              cfg_scale: route.overrides.cfg_scale,
+            }),
+            signal: imgController.signal,
+          }, accessTokenRef.current);
+
+          if (imgController.signal.aborted || !stillOnSameConversation()) return;
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({ error: "Failed to generate image" }));
+            throw new Error(errData.error || pickRandom(LOCAL_IMAGE_FAIL));
+          }
+
+          const data = await res.json();
+          if (!data.image) throw new Error(pickRandom(LOCAL_IMAGE_FAIL));
+
+          if (imgController.signal.aborted || !stillOnSameConversation()) return;
+
+          // Patch the placeholder in place
+          const captionText = pickRandom(LOCAL_IMAGE_CAPTIONS);
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === herMessageId
+                ? { ...m, content: captionText, image: data.image, imageLoading: false, timestamp: Date.now() }
+                : m
+            )
+          );
+          setForceScrollTrigger((n) => n + 1);
+
+          persistAssistantMessage(startingConvoId, userId, captionText, herMessageId, data.image, refreshConversations);
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          if (!stillOnSameConversation()) return;
+          const msg = err instanceof Error ? err.message : "something went wrong";
+          setError(msg);
+          // Drop the placeholder so the failed turn doesn't linger
+          setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
+        } finally {
+          if (explicitImageAbortRef.current === imgController) {
+            explicitImageAbortRef.current = null;
+          }
         }
+      })();
 
-        const data = await res.json();
-
-        if (!data.image) {
-          throw new Error(pickRandom(LOCAL_IMAGE_FAIL));
-        }
-
-        // ── Image generated — finalize ──
-        const captionText = pickRandom(LOCAL_IMAGE_CAPTIONS);
-
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === herMessageId
-              ? { ...m, content: captionText, image: data.image, imageLoading: false, timestamp: Date.now() }
-              : m
-          )
-        );
-        setForceScrollTrigger((n) => n + 1);
-
-        // ── Persist assistant image message to Supabase ──
-        persistAssistantMessage(convoId, userId, captionText, herMessageId, data.image, refreshConversations);
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          return;
-        }
-        const msg = err instanceof Error ? err.message : "something went wrong";
-        setError(msg);
-        setMessages((prev) => prev.filter((m) => m.id !== herMessageId));
-      } finally {
-        setIsTyping(false);
-        setIsStreaming(false);
-        sendingRef.current = false;
-        if (abortRef.current === controller) abortRef.current = null;
-      }
-      return; // Exit early — image path complete
+      return; // Exit early — image path scheduled
     }
 
     // ── Text streaming branch (existing) ──
@@ -1541,6 +1620,8 @@ export default function ChatPage() {
     abortRef.current = null;
     autoImageAbortRef.current?.abort();
     autoImageAbortRef.current = null;
+    explicitImageAbortRef.current?.abort();
+    explicitImageAbortRef.current = null;
     clearSession();
     clearActiveConversationId();
     setActiveConvoId(null);

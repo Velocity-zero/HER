@@ -11,6 +11,7 @@ import {
 } from "@/lib/image-models";
 import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
 import { stampCooldown } from "@/lib/auto-image-cooldown";
+import { loadHerReferenceImage, HER_PERSONA_DESCRIPTION } from "@/lib/her-persona";
 
 /**
  * Detect image MIME type from base64 magic bytes.
@@ -463,9 +464,33 @@ export async function POST(req: NextRequest) {
     // after) an explicit generate will see the stamp and bail out.
     stampCooldown(auth.userId);
 
+    // ── Self-portrait fallback for explicit edit calls without an upload ──
+    // When the client routes a self-portrait through Kontext (mode: "edit")
+    // but doesn't ship an image (no studio upload), inject HER's reference
+    // image + persona description so character consistency is preserved.
+    let resolvedImage = body.image;
+    let resolvedImageMime: string | undefined;
+    let resolvedPrompt = prompt;
+    if (body.mode === "edit" && !resolvedImage) {
+      const ref = loadHerReferenceImage();
+      if (ref) {
+        resolvedImage = ref.dataUrl;
+        resolvedImageMime = ref.mimeType;
+        // Anchor the prompt with HER's appearance for character consistency.
+        resolvedPrompt = `${prompt}, ${HER_PERSONA_DESCRIPTION}`;
+        console.log("[HER Imagine] Self-portrait fallback: using HER reference image");
+      } else {
+        console.warn("[HER Imagine] Edit mode requested but no reference image available");
+        return imageError(
+          "Self-portrait reference image is missing on the server.",
+          500,
+          body.modelId
+        );
+      }
+    }
 
     const result = await generateImageCore({
-      prompt,
+      prompt: resolvedPrompt,
       modelId: body.modelId,
       mode: body.mode,
       aspect_ratio: body.aspect_ratio,
@@ -473,7 +498,8 @@ export async function POST(req: NextRequest) {
       cfg_scale: body.cfg_scale,
       negative_prompt: body.negative_prompt,
       seed: body.seed,
-      image: body.image,
+      image: resolvedImage,
+      imageMimeType: resolvedImageMime,
     });
 
     if (!result.image) {
