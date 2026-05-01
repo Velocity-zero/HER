@@ -262,6 +262,95 @@ async function maybeHerReact(
   }
 }
 
+/**
+ * Implicit image generation via /api/imagine/auto.
+ *
+ * Fires in the background after a normal text reply completes. The server
+ * pipeline:
+ *   1. Classifies intent (skips silently if no visual intent detected)
+ *   2. Routes to the best image model
+ *   3. Generates + verifies + retries once
+ *   4. Generates a contextual delivery caption
+ *
+ * When an image is ready, we append a NEW HER message with the caption + image
+ * to the chat. This keeps the conversation flowing naturally — HER appears to
+ * follow up with the image when she's ready, rather than blocking the chat.
+ */
+async function maybeAutoGenerateImage(
+  contextMessages: Message[],
+  userId: string,
+  convoId: string | null,
+  accessToken: string | null,
+  setMessages: Dispatch<SetStateAction<Message[]>>,
+  setForceScrollTrigger: Dispatch<SetStateAction<number>>,
+  refreshConversations: () => Promise<void>,
+): Promise<void> {
+  try {
+    // Skip if the regex fast-path already handled this turn (explicit image request).
+    const lastUser = [...contextMessages].reverse().find((m) => m.role === "user");
+    if (!lastUser || isImageRequest(lastUser.content)) return;
+
+    // Build a compact history payload for the classifier
+    const payload = {
+      userId,
+      messages: contextMessages
+        .filter((m) => m.id !== "greeting")
+        .slice(-8)
+        .map((m) => ({ role: m.role, content: m.content })),
+    };
+
+    const res = await authFetch("/api/imagine/auto", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }, accessToken);
+
+    if (!res.ok) return;
+
+    const data = (await res.json()) as {
+      generated: boolean;
+      image?: string;
+      caption?: string;
+    };
+
+    if (!data.generated || !data.image) return;
+
+    const captionText = data.caption ?? "here you go 😊";
+    const newMessageId = generateId();
+
+    const newMessage: Message = {
+      id: newMessageId,
+      role: "assistant",
+      content: captionText,
+      timestamp: Date.now(),
+      image: data.image,
+    };
+
+    setMessages((prev) => [...prev, newMessage]);
+    setForceScrollTrigger((n) => n + 1);
+
+    // Persist to Supabase (handles Storage upload internally)
+    if (convoId) {
+      let finalUrl = data.image;
+      if (isDataUrl(finalUrl)) {
+        finalUrl = await uploadDataUrlToStorage(userId, finalUrl);
+      }
+      saveMessageToSupabase({
+        conversationId: convoId,
+        userId,
+        role: "assistant",
+        content: captionText,
+        imageUrl: finalUrl,
+        clientMessageId: newMessageId,
+      }).catch(() => {});
+      touchConversation(convoId).catch(() => {});
+      refreshConversations().catch(() => {});
+    }
+  } catch {
+    // Non-critical — silently ignore failures so they never disrupt the chat.
+  }
+}
+
 export default function ChatPage() {
   const { user, session, isAuthenticated, loading: authLoading } = useAuth();
 
@@ -1128,6 +1217,20 @@ export default function ChatPage() {
           }),
         }, accessTokenRef.current).catch(() => {});
       }
+
+      // ── Implicit image generation (auto pipeline) ──
+      // Fire in background, in parallel with the rest of the response cycle.
+      // If the classifier says yes, an image arrives later as a NEW HER message
+      // with a contextual delivery caption — never interrupting the active flow.
+      maybeAutoGenerateImage(
+        updatedMessages,
+        userId,
+        convoId,
+        accessTokenRef.current,
+        setMessages,
+        setForceScrollTrigger,
+        refreshConversations,
+      );
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         return;
