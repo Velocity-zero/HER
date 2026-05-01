@@ -18,12 +18,21 @@ import type { ImageIntent } from "./types";
  * Broad visual-keyword patterns.
  * Intentionally permissive — false positives are filtered by the LLM.
  * False negatives here mean we skip the LLM entirely (wasted cost avoided).
+ *
+ * Tightened so bare "see" / "look" don't trigger the classifier on every
+ * "i see your point" or "look at this code" — we require a visual object
+ * nearby for those high-frequency words.
  */
 const VISUAL_KEYWORD_PATTERNS = [
-  /\b(see|show|look|appear|face|photo|pic|image|picture|draw|paint|sketch|generate|create|selfie)\b/i,
+  // Strong visual nouns/verbs that almost always imply imagery
+  /\b(photo|pic|image|picture|selfie|sketch|painting)\b/i,
+  /\b(draw|paint|generate|create|render)\s+(me|a|an|us|some)\b/i,
+  // "see/show/look" only when paired with a visual target
+  /\bsee\s+(you|her|him|it|them|this|that|the|a|an|my|your|some)\b/i,
+  /\bshow\s+(me|us)\b/i,
+  /\blook\s+(like|at this picture|at this image|at the photo)\b/i,
   /\bi (wanna|want to|would like to|gotta|need to) see\b/i,
-  /\bshow me\b/i,
-  /\bsend me\b/i,
+  /\bsend me\s+(a|an|the|your|some)\b/i,
   /\bcan i see\b/i,
   /\bwhat.*look like\b/i,
   /\byour (face|appearance|outfit|room|place|background|surroundings)\b/i,
@@ -110,7 +119,17 @@ Respond ONLY with valid JSON matching this exact schema:
   "reason": string
 }`;
 
-const CONFIDENCE_THRESHOLD = 0.7;
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
+const CONFIDENCE_THRESHOLD = (() => {
+  const raw = process.env.IMAGE_INTENT_CONFIDENCE_THRESHOLD;
+  if (!raw) return DEFAULT_CONFIDENCE_THRESHOLD;
+  const v = parseFloat(raw);
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : DEFAULT_CONFIDENCE_THRESHOLD;
+})();
+const CONTEXT_WINDOW = parseInt(
+  process.env.IMAGE_INTENT_CONTEXT_WINDOW ?? "8",
+  10
+);
 
 /**
  * Classify whether the latest message in a conversation implies image intent.
@@ -138,9 +157,14 @@ export async function classifyImageIntent(
 
   // Build a compact conversation context for the classifier
   const recentContext = messages
-    .slice(-8)
+    .slice(-CONTEXT_WINDOW)
     .map((m) => `${m.role === "user" ? "User" : "HER"}: ${m.content.slice(0, 200)}`)
     .join("\n");
+
+  // Pull out the latest user message verbatim so the LLM classifies *it*
+  // rather than mistaking visual words inside HER's preceding reply for
+  // user intent.
+  const latestUserContent = lastUserMsg.content.slice(0, 400);
 
   try {
     const raw = await nvidiaChat(
@@ -148,7 +172,10 @@ export async function classifyImageIntent(
         { role: "system", content: CLASSIFIER_SYSTEM_PROMPT },
         {
           role: "user",
-          content: `Conversation:\n${recentContext}\n\nClassify the latest user message. Respond with JSON only.`,
+          content:
+            `Conversation (for context only):\n${recentContext}\n\n` +
+            `Latest user message to classify:\n"${latestUserContent}"\n\n` +
+            `Classify ONLY the latest user message above. Visual words appearing in HER's prior replies do NOT count as user intent. Respond with JSON only.`,
         },
       ],
       { maxTokens: 300, temperature: 0.2, topP: 0.9 }

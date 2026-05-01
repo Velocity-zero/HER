@@ -141,14 +141,16 @@ export interface ImageIntent {
 
 /** Result from the vision-LLM quality verifier */
 export interface VerifierResult {
-  /** Quality score 0–10 */
+  /** Quality score 0–10 (-1 when verifier was skipped) */
   score: number;
-  /** True if score meets the configured threshold */
+  /** True if score meets the configured threshold (or verifier skipped) */
   pass: boolean;
   /** List of detected issue codes */
   issues: string[];
   /** Short human-readable summary */
   notes: string;
+  /** True when the verifier did not actually run (missing key, API error, etc.) */
+  skipped?: boolean;
 }
 
 /** Response from POST /api/imagine/auto */

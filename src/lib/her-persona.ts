@@ -36,31 +36,46 @@ const REFERENCE_IMAGE_FS_PATH = path.join(
   "reference.png"
 );
 
+type ReferenceImage = { dataUrl: string; mimeType: string };
+
+// Module-scope cache — the reference image is immutable for the life of the
+// process, so we read & encode it at most once.
+// `undefined` = not loaded yet, `null` = load attempted and failed/missing.
+let cachedReference: ReferenceImage | null | undefined;
+
 /**
  * Load HER's reference image from disk as a base64 data URL.
  * Server-side only. Returns null if the file is missing or unreadable.
+ * Result is cached at module scope after the first call.
  */
-export function loadHerReferenceImage(): {
-  dataUrl: string;
-  mimeType: string;
-} | null {
+export function loadHerReferenceImage(): ReferenceImage | null {
+  if (cachedReference !== undefined) return cachedReference;
+
   try {
     if (!fs.existsSync(REFERENCE_IMAGE_FS_PATH)) {
       console.warn(
         "[HER Persona] Reference image not found at:",
         REFERENCE_IMAGE_FS_PATH
       );
+      cachedReference = null;
       return null;
     }
     const buffer = fs.readFileSync(REFERENCE_IMAGE_FS_PATH);
     const base64 = buffer.toString("base64");
     const mimeType = "image/png";
-    return { dataUrl: `data:${mimeType};base64,${base64}`, mimeType };
+    cachedReference = { dataUrl: `data:${mimeType};base64,${base64}`, mimeType };
+    return cachedReference;
   } catch (err) {
     console.warn(
       "[HER Persona] Failed to load reference image:",
       err instanceof Error ? err.message : err
     );
+    cachedReference = null;
     return null;
   }
+}
+
+/** Test-only: clear the cached reference image. */
+export function _resetHerReferenceImageCache(): void {
+  cachedReference = undefined;
 }

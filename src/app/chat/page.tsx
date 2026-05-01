@@ -284,8 +284,18 @@ async function maybeAutoGenerateImage(
   setMessages: Dispatch<SetStateAction<Message[]>>,
   setForceScrollTrigger: Dispatch<SetStateAction<number>>,
   refreshConversations: () => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<void> {
+  // Snapshot the conversation we belong to. If the user switches chats or
+  // starts a new one before the image arrives, we drop the result rather
+  // than appending a phantom selfie to the wrong conversation.
+  const startingConvoId = convoId;
+  const stillOnSameConversation = () =>
+    getActiveConversationId() === startingConvoId;
+
   try {
+    if (signal?.aborted) return;
+
     // Skip if the regex fast-path already handled this turn (explicit image request).
     const lastUser = [...contextMessages].reverse().find((m) => m.role === "user");
     if (!lastUser || isImageRequest(lastUser.content)) return;
@@ -303,9 +313,11 @@ async function maybeAutoGenerateImage(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal,
     }, accessToken);
 
     if (!res.ok) return;
+    if (signal?.aborted || !stillOnSameConversation()) return;
 
     const data = (await res.json()) as {
       generated: boolean;
@@ -314,6 +326,7 @@ async function maybeAutoGenerateImage(
     };
 
     if (!data.generated || !data.image) return;
+    if (signal?.aborted || !stillOnSameConversation()) return;
 
     const captionText = data.caption ?? "here you go 😊";
     const newMessageId = generateId();
@@ -330,20 +343,24 @@ async function maybeAutoGenerateImage(
     setForceScrollTrigger((n) => n + 1);
 
     // Persist to Supabase (handles Storage upload internally)
-    if (convoId) {
+    if (startingConvoId) {
       let finalUrl = data.image;
       if (isDataUrl(finalUrl)) {
         finalUrl = await uploadDataUrlToStorage(userId, finalUrl);
       }
+      // Re-check after the (potentially slow) upload — don't write to a
+      // conversation the user has since left. The UI message stays;
+      // persistence just becomes best-effort.
+      if (!stillOnSameConversation()) return;
       saveMessageToSupabase({
-        conversationId: convoId,
+        conversationId: startingConvoId,
         userId,
         role: "assistant",
         content: captionText,
         imageUrl: finalUrl,
         clientMessageId: newMessageId,
       }).catch(() => {});
-      touchConversation(convoId).catch(() => {});
+      touchConversation(startingConvoId).catch(() => {});
       refreshConversations().catch(() => {});
     }
   } catch {
@@ -384,6 +401,11 @@ export default function ChatPage() {
 
   // Abort controller — cancel in-flight requests on conversation switch or unmount
   const abortRef = useRef<AbortController | null>(null);
+  // Separate controller for the background auto-image pipeline. We don't want
+  // a normal stream-abort to kill an in-flight image, but switching
+  // conversations / starting a new chat / unmounting must cancel it so the
+  // result never lands in the wrong conversation.
+  const autoImageAbortRef = useRef<AbortController | null>(null);
 
   // ── Empty state / suggestion chip prefill ──
   const [prefillText, setPrefillText] = useState<string | null>(null);
@@ -611,6 +633,8 @@ export default function ChatPage() {
     return () => {
       abortRef.current?.abort();
       abortRef.current = null;
+      autoImageAbortRef.current?.abort();
+      autoImageAbortRef.current = null;
     };
   }, []);
 
@@ -622,6 +646,9 @@ export default function ChatPage() {
     // Cancel any in-flight request from the previous conversation
     abortRef.current?.abort();
     abortRef.current = null;
+    // Also kill any background auto-image — it belongs to the previous convo.
+    autoImageAbortRef.current?.abort();
+    autoImageAbortRef.current = null;
 
     setLoadingConvo(true);
     sendingRef.current = false;
@@ -1222,6 +1249,11 @@ export default function ChatPage() {
       // Fire in background, in parallel with the rest of the response cycle.
       // If the classifier says yes, an image arrives later as a NEW HER message
       // with a contextual delivery caption — never interrupting the active flow.
+      // Cancel any previous auto-image first — we only ever care about the
+      // most recent turn's pending image.
+      autoImageAbortRef.current?.abort();
+      const autoImageController = new AbortController();
+      autoImageAbortRef.current = autoImageController;
       maybeAutoGenerateImage(
         updatedMessages,
         userId,
@@ -1230,7 +1262,12 @@ export default function ChatPage() {
         setMessages,
         setForceScrollTrigger,
         refreshConversations,
-      );
+        autoImageController.signal,
+      ).finally(() => {
+        if (autoImageAbortRef.current === autoImageController) {
+          autoImageAbortRef.current = null;
+        }
+      });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         return;
@@ -1502,6 +1539,8 @@ export default function ChatPage() {
 
     abortRef.current?.abort();
     abortRef.current = null;
+    autoImageAbortRef.current?.abort();
+    autoImageAbortRef.current = null;
     clearSession();
     clearActiveConversationId();
     setActiveConvoId(null);

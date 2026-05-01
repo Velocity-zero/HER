@@ -77,16 +77,25 @@ export function routeImageType(
       };
 
     case "realistic_scene":
+      break;
     default:
-      return {
-        modelId: "stable-diffusion-3-medium",
-        mode: "create",
-        useReferenceImage: false,
-        overrides: {
-          steps: 40,
-          cfg_scale: 5,
-          aspect_ratio: aspectRatio,
-        },
-      };
+      // Unknown / unexpected image type from classifier — log so it's visible.
+      if (imageType !== null) {
+        console.warn(
+          `[HER Router] Unknown image_type "${imageType}" — falling back to realistic_scene`
+        );
+      }
+      break;
   }
+
+  return {
+    modelId: "stable-diffusion-3-medium",
+    mode: "create",
+    useReferenceImage: false,
+    overrides: {
+      steps: 40,
+      cfg_scale: 5,
+      aspect_ratio: aspectRatio,
+    },
+  };
 }

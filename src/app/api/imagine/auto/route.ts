@@ -24,30 +24,15 @@ import { generateImageCore } from "@/app/api/imagine/route";
 import { loadHerReferenceImage, HER_PERSONA_DESCRIPTION } from "@/lib/her-persona";
 import { nvidiaChat } from "@/lib/multimodal";
 import { validateApiRequest } from "@/lib/api-auth";
+import { isOnCooldown, stampCooldown, refundCooldown } from "@/lib/auto-image-cooldown";
 import type { AutoImageResult } from "@/lib/types";
 
-// ── Per-user cooldown ──────────────────────────────────────
-
-/** Soft per-user throttle to avoid NVIDIA rate-limit stacking */
-const USER_LAST_AUTO_IMAGE = new Map<string, number>();
-const COOLDOWN_MS = parseInt(process.env.AUTO_IMAGE_COOLDOWN_MS ?? "10000", 10);
-
-function isOnCooldown(userId: string): boolean {
-  const last = USER_LAST_AUTO_IMAGE.get(userId);
-  if (!last) return false;
-  return Date.now() - last < COOLDOWN_MS;
-}
-
-function stampCooldown(userId: string): void {
-  USER_LAST_AUTO_IMAGE.set(userId, Date.now());
-  // Prune map to avoid unbounded growth in long-running instances
-  if (USER_LAST_AUTO_IMAGE.size > 10_000) {
-    const cutoff = Date.now() - COOLDOWN_MS * 10;
-    for (const [k, v] of USER_LAST_AUTO_IMAGE) {
-      if (v < cutoff) USER_LAST_AUTO_IMAGE.delete(k);
-    }
-  }
-}
+// ── Tunables (env-overridable) ─────────────────────────
+const MAX_ATTEMPTS = parseInt(process.env.AUTO_IMAGE_MAX_ATTEMPTS ?? "2", 10);
+const CAPTION_CONTEXT_WINDOW = parseInt(
+  process.env.AUTO_IMAGE_CAPTION_CONTEXT ?? "6",
+  10
+);
 
 // ── Caption generator ─────────────────────────────────────
 
@@ -100,6 +85,7 @@ async function generateCaption(
 // ── Route handler ─────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  let stampedUserId: string | null = null;
   try {
     const auth = await validateApiRequest(req);
     if (auth.error) return auth.error;
@@ -122,10 +108,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ generated: false } satisfies AutoImageResult);
     }
 
+    // Stamp BEFORE the classifier await so concurrent requests can't both pass.
+    // Refunded if the classifier decides not to generate, or if we throw.
+    stampCooldown(userId);
+    stampedUserId = userId;
+
     // ── Step 1: Classify intent ──
     const intent = await classifyImageIntent(messages);
 
     if (!intent.should_generate) {
+      refundCooldown(userId);
+      stampedUserId = null;
       return NextResponse.json({ generated: false } satisfies AutoImageResult);
     }
 
@@ -134,11 +127,8 @@ export async function POST(req: NextRequest) {
         `confidence=${intent.confidence.toFixed(2)} prompt="${intent.refined_prompt.slice(0, 80)}"`
     );
 
-    // Stamp cooldown now so concurrent requests don't both fire
-    stampCooldown(userId);
-
     // ── Step 2: Route to model ──
-    const route = routeImageType(
+    let route = routeImageType(
       intent.image_type as Parameters<typeof routeImageType>[0],
       intent.aspect_ratio
     );
@@ -154,11 +144,10 @@ export async function POST(req: NextRequest) {
         referenceImageMimeType = ref.mimeType;
         console.log("[HER Auto] Reference image loaded for self-portrait");
       } else {
-        // Graceful fallback: no reference image → use SD3 create mode
-        console.warn("[HER Auto] Reference image missing — falling back to SD3 create mode");
-        route.mode = "create";
-        route.modelId = "stable-diffusion-3-medium";
-        route.useReferenceImage = false;
+        // Graceful fallback: re-route through routeImageType so we get
+        // SD3's own steps/cfg_scale instead of inheriting Kontext's.
+        console.warn("[HER Auto] Reference image missing — falling back to realistic_scene route");
+        route = routeImageType("realistic_scene", intent.aspect_ratio);
       }
     }
 
@@ -173,9 +162,38 @@ export async function POST(req: NextRequest) {
     let bestScore = -1;
     let attempts = 0;
     let isSoftCaption = false;
+    let firstSeed: number | undefined;
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // Speculatively kick off the "normal" delivery caption in parallel with
+    // generation/verification. Caption inputs (recent context + image_type)
+    // are known up front; only `isSoftCaption` is decided later. We still
+    // fall back to a soft caption regeneration if both attempts fail.
+    const recentContext = messages
+      .slice(-CAPTION_CONTEXT_WINDOW)
+      .map((m) => `${m.role === "user" ? "User" : "HER"}: ${m.content.slice(0, 150)}`)
+      .join("\n");
+    const speculativeCaptionPromise = generateCaption(
+      recentContext,
+      intent.image_type,
+      false
+    ).catch(() => "here you go 😊");
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       attempts = attempt;
+
+      // Deterministic-ish retry seed: derive from the first attempt's seed
+      // so retries are reproducible and meaningfully different from a single
+      // unlucky draw. (random XOR mask flips the high bits.)
+      let seed: number | undefined;
+      if (attempt === 1) {
+        firstSeed = Math.floor(Math.random() * 2_147_483_647);
+        seed = firstSeed;
+      } else if (firstSeed !== undefined) {
+        // eslint-disable-next-line no-bitwise
+        seed = (firstSeed ^ 0x5a5a5a5a) >>> 0;
+        // Clamp into i32 positive range expected by most providers.
+        seed = seed % 2_147_483_647;
+      }
 
       const genResult = await generateImageCore({
         prompt: finalPrompt,
@@ -183,9 +201,11 @@ export async function POST(req: NextRequest) {
         mode: route.mode,
         image: referenceImageDataUrl,
         imageMimeType: referenceImageMimeType,
+        // The classifier already produced `refined_prompt`; skip the second
+        // Mistral enhancement pass to avoid wasting an LLM call per attempt.
+        skipEnhancement: true,
         ...route.overrides,
-        // Vary seed on retry for a different result
-        seed: attempt === 2 ? Math.floor(Math.random() * 2_147_483_647) : undefined,
+        seed,
       });
 
       if (!genResult.image) {
@@ -201,7 +221,8 @@ export async function POST(req: NextRequest) {
       }
 
       if (verification.pass) {
-        console.log(`[HER Auto] Attempt ${attempt} passed verifier (score=${verification.score})`);
+        const tag = verification.skipped ? "skipped" : `score=${verification.score}`;
+        console.log(`[HER Auto] Attempt ${attempt} ${verification.skipped ? "delivered (verifier skipped)" : "passed verifier"} (${tag})`);
         break;
       }
 
@@ -210,9 +231,9 @@ export async function POST(req: NextRequest) {
           `(score=${verification.score} issues=[${verification.issues.join(", ")}])`
       );
 
-      if (attempt === 2) {
+      if (attempt === MAX_ATTEMPTS) {
         isSoftCaption = true;
-        console.log("[HER Auto] Both attempts failed — sending best-of-two with soft caption");
+        console.log(`[HER Auto] All ${MAX_ATTEMPTS} attempts failed — sending best with soft caption`);
       }
     }
 
@@ -221,13 +242,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ generated: false } satisfies AutoImageResult);
     }
 
-    // ── Step 6: Generate contextual delivery caption ──
-    const recentContext = messages
-      .slice(-6)
-      .map((m) => `${m.role === "user" ? "User" : "HER"}: ${m.content.slice(0, 150)}`)
-      .join("\n");
-
-    const caption = await generateCaption(recentContext, intent.image_type, isSoftCaption);
+    // ── Step 6: Resolve delivery caption ──
+    // If we ended up needing a soft caption, regenerate; otherwise use the
+    // speculative one we kicked off in parallel with generation.
+    const caption = isSoftCaption
+      ? await generateCaption(recentContext, intent.image_type, true)
+      : await speculativeCaptionPromise;
 
     const result: AutoImageResult = {
       generated: true,
@@ -249,6 +269,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
+    // If we stamped the cooldown but failed before delivering, refund it so
+    // the user isn't locked out of the next attempt for an error they didn't
+    // cause.
+    if (stampedUserId) {
+      refundCooldown(stampedUserId);
+    }
     console.error(
       "[HER Auto] Unhandled error:",
       err instanceof Error ? err.message : err

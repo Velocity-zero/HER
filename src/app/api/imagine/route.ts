@@ -10,6 +10,19 @@ import {
   DEFAULT_EDIT_MODEL_ID,
 } from "@/lib/image-models";
 import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
+import { stampCooldown } from "@/lib/auto-image-cooldown";
+
+/**
+ * Detect image MIME type from base64 magic bytes.
+ * Falls back to image/png since Flux/SD3 return PNG.
+ */
+function sniffImageMime(base64: string): string {
+  if (base64.startsWith("/9j/")) return "image/jpeg";
+  if (base64.startsWith("iVBORw")) return "image/png";
+  if (base64.startsWith("R0lGOD")) return "image/gif";
+  if (base64.startsWith("UklGR")) return "image/webp";
+  return "image/png";
+}
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -175,6 +188,12 @@ export interface GenerateImageOptions {
   image?: string;
   /** Override MIME type for NVCF asset upload (e.g. "image/png") */
   imageMimeType?: string;
+  /**
+   * Skip the Mistral prompt-enhancement step. Use this when the prompt has
+   * already been refined upstream (e.g. by the auto-pipeline classifier),
+   * to avoid a redundant ~300–500ms LLM call per attempt.
+   */
+  skipEnhancement?: boolean;
 }
 
 export interface GenerateImageResult {
@@ -245,11 +264,12 @@ export async function generateImageCore(
 
     if (model.capabilities.image_input) {
       try {
-        const mimeType = opts.imageMimeType ?? "image/jpeg";
+        const mimeType = opts.imageMimeType ?? sniffImageMime(safe);
         const assetResult = await uploadNvcfAsset(safe, apiKey, mimeType);
         nvcfAssetId = assetResult.assetId;
-        normalizedImage = `data:image/jpeg;example_id,${assetResult.assetId}`;
-        console.log(`[HER Imagine] NVCF asset uploaded: ${assetResult.assetId}`);
+        // NVCF expects: data:<mime>;asset_id,<id>
+        normalizedImage = `data:${mimeType};asset_id,${assetResult.assetId}`;
+        console.log(`[HER Imagine] NVCF asset uploaded: ${assetResult.assetId} (${mimeType})`);
       } catch (uploadErr) {
         console.error(
           "[HER Imagine] NVCF asset upload failed:",
@@ -277,7 +297,9 @@ export async function generateImageCore(
     originalPrompt.length > 80 && originalPrompt.split(/\s+/).length > 12;
   let finalPrompt = originalPrompt;
 
-  if (isDetailed && model.mode !== "edit") {
+  if (opts.skipEnhancement) {
+    console.log(`[HER Imagine] Skipping enhancement (caller-provided refined prompt)`);
+  } else if (isDetailed && model.mode !== "edit") {
     console.log(`[HER Imagine] Prompt already detailed — skipping enhancement`);
   } else {
     try {
@@ -291,7 +313,7 @@ export async function generateImageCore(
         temperature: model.mode === "edit" ? 0.4 : short ? 0.68 : 0.6,
         topP: 0.9,
       });
-      finalPrompt = enhanced.replace(/^"|"$/g, "").trim() || originalPrompt;
+      finalPrompt = enhanced.replace(/^[\u0022\u0027\u2018\u2019\u201C\u201D]+|[\u0022\u0027\u2018\u2019\u201C\u201D]+$/g, "").trim() || originalPrompt;
       console.log(`[HER Imagine] Enhanced prompt: "${finalPrompt.slice(0, 120)}"`);
     } catch (enhanceErr) {
       console.warn(
@@ -399,7 +421,7 @@ export async function generateImageCore(
     `[HER Image] model=${model.id} mode=${model.mode} status=success shape=${matchedShape} b64len=${base64Image.length}`
   );
 
-  const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+  const dataUrl = `data:${sniffImageMime(base64Image)};base64,${base64Image}`;
 
   const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
   const result: GenerateImageResult = { image: dataUrl };
@@ -435,6 +457,13 @@ export async function POST(req: NextRequest) {
       return imageError("Image generation failed (400): Missing prompt", 400);
     }
 
+    // Stamp the cooldown BEFORE generation. The cooldown map is shared with
+    // /api/imagine/auto, so this acts as a server-side suppression key:
+    // any auto-pipeline call that arrives concurrently with (or shortly
+    // after) an explicit generate will see the stamp and bail out.
+    stampCooldown(auth.userId);
+
+
     const result = await generateImageCore({
       prompt,
       modelId: body.modelId,
@@ -454,6 +483,10 @@ export async function POST(req: NextRequest) {
         body.modelId
       );
     }
+
+    // Re-stamp after success to extend suppression window from the moment
+    // the image was actually delivered.
+    stampCooldown(auth.userId);
 
     const response: Record<string, string> = { image: result.image };
     if (result.revisedPrompt) response.revisedPrompt = result.revisedPrompt;

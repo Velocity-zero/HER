@@ -15,9 +15,15 @@
 import type { VerifierResult } from "./types";
 
 const NVIDIA_VISION_URL =
+  process.env.NVIDIA_VISION_URL ??
   "https://integrate.api.nvidia.com/v1/chat/completions";
-const NVIDIA_VISION_MODEL = "google/gemma-3-27b-it";
+const NVIDIA_VISION_MODEL =
+  process.env.NVIDIA_VISION_MODEL ?? "google/gemma-3-27b-it";
 const DEFAULT_THRESHOLD = 6.5;
+const VISION_TIMEOUT_MS = parseInt(
+  process.env.IMAGE_VERIFIER_TIMEOUT_MS ?? "15000",
+  10
+);
 
 function getThreshold(): number {
   const raw = process.env.IMAGE_VERIFIER_THRESHOLD;
@@ -63,12 +69,14 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 export async function verifyImage(imageDataUrl: string): Promise<VerifierResult> {
   const threshold = getThreshold();
 
-  // Soft default: pass if verifier is unavailable
+  // Soft default: pass if verifier is unavailable.
+  // `skipped: true` so callers can distinguish a real pass from a fallback.
   const passthrough: VerifierResult = {
-    score: 7,
+    score: -1,
     pass: true,
     issues: [],
     notes: "verifier unavailable — defaulting to pass",
+    skipped: true,
   };
 
   const apiKey = process.env.NVIDIA_VISION_API_KEY;
@@ -106,7 +114,7 @@ export async function verifyImage(imageDataUrl: string): Promise<VerifierResult>
         temperature: 0.1,
         stream: false,
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
     });
 
     if (!res.ok) {
