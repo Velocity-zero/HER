@@ -25,7 +25,7 @@ function imageError(message: string, status: number, modelId?: string) {
  * Normalize an image string into raw base64 (no data-URL prefix).
  * Returns null if the input is clearly invalid.
  */
-function normalizeBase64Image(raw: string | undefined | null): string | null {
+export function normalizeBase64Image(raw: string | undefined | null): string | null {
   if (!raw || typeof raw !== "string") return null;
   // Strip data URL prefix if present
   let b64 = raw;
@@ -39,290 +39,9 @@ function normalizeBase64Image(raw: string | undefined | null): string | null {
   return b64;
 }
 
-/**
- * POST /api/imagine
- *
- * Unified image generation pipeline supporting:
- *   - Multiple text-to-image models (create mode)
- *   - Image editing model (edit mode)
- *   - Advanced generation controls (capability-aware)
- *
- * Backward compatible: a simple { prompt: "..." } request still works
- * and routes to the default create model (Stable Diffusion 3 Medium).
- *
- * Pipeline:
- *   1. Validate request & resolve model
- *   2. Enhance prompt via Mistral (create=cinematic, edit=precise)
- *   3. Build capability-aware payload from model registry
- *   4. Call the correct NVIDIA endpoint
- *   5. Return { image: "data:image/jpeg;base64,..." }
- */
-
-export async function POST(req: NextRequest) {
-  try {
-    // ── Auth check ──
-    const auth = await validateApiRequest(req);
-    if (auth.error) return auth.error;
-
-    const sizeError = checkBodySize(req);
-    if (sizeError) return sizeError;
-
-    const body = (await req.json()) as ImageGenerationRequest;
-
-    // ── Validate prompt ──
-    const prompt = body.prompt?.trim();
-    if (!prompt || typeof prompt !== "string" || prompt.length === 0) {
-      return imageError("Image generation failed (400): Missing prompt", 400);
-    }
-
-    // ── Resolve model ──
-    const requestMode = body.mode || "create";
-    let modelId = body.modelId;
-
-    // Default model selection based on mode
-    if (!modelId) {
-      modelId = requestMode === "edit" ? DEFAULT_EDIT_MODEL_ID : DEFAULT_CREATE_MODEL_ID;
-    }
-
-    // Validate model exists
-    if (!isValidModelId(modelId)) {
-      return imageError(`Image generation failed (400): Unknown model '${modelId}'`, 400, modelId);
-    }
-
-    const model = getImageModel(modelId)!;
-
-    // Validate mode matches model
-    if (model.mode !== requestMode) {
-      return imageError(
-        `Image generation failed (400): Model ${model.id} is for ${model.mode} mode, not ${requestMode}.`,
-        400, model.id
-      );
-    }
-
-    // ── Resolve API key for this model ──
-    const apiKey = resolveApiKey(model);
-    if (!apiKey) {
-      console.error(
-        `[HER Imagine] Missing API key for ${model.label} (${model.envKey}). ` +
-        `Set ${model.envKey} or NVIDIA_IMAGE_API_KEY in .env.local.`
-      );
-      return imageError(
-        `API key missing for ${model.label}. Configure ${model.envKey}.`,
-        500, model.id
-      );
-    }
-
-    // ── Validate edit mode source image ──
-    let normalizedImage: string | undefined;
-    /** Populated when the edit model uses the NVCF asset upload flow */
-    let nvcfAssetId: string | undefined;
-    if (model.mode === "edit") {
-      if (!body.image) {
-        return imageError("Image edit failed (400): Missing source image", 400, model.id);
-      }
-      const safe = normalizeBase64Image(body.image);
-      if (!safe) {
-        return imageError("Image edit failed (400): Invalid image payload", 400, model.id);
-      }
-
-      // Kontext requires images via NVCF asset upload (data:image/jpeg;example_id,<uuid> format).
-      // Upload the base64 image to S3 via the NVCF asset API, then reference the asset ID.
-      if (model.capabilities.image_input) {
-        try {
-          const assetResult = await uploadNvcfAsset(safe, apiKey);
-          nvcfAssetId = assetResult.assetId;
-          normalizedImage = `data:image/jpeg;example_id,${assetResult.assetId}`;
-          console.log(`[HER Imagine] NVCF asset uploaded: ${assetResult.assetId}`);
-        } catch (uploadErr) {
-          console.error(
-            "[HER Imagine] NVCF asset upload failed:",
-            uploadErr instanceof Error ? uploadErr.message : uploadErr
-          );
-          return imageError("Image edit failed: unable to prepare source image for processing.", 502, model.id);
-        }
-      } else {
-        normalizedImage = safe;
-      }
-    }
-
-    const originalPrompt = prompt;
-    const short = isShortPrompt(originalPrompt);
-    console.log(
-      `[HER Imagine] Model: ${model.label} | Mode: ${model.mode} | Short: ${short} | Prompt: "${originalPrompt.slice(0, 80)}"`
-    );
-
-    // ── Step 1: Enhance the prompt via Mistral ──
-    // Skip enhancement for already detailed prompts (saves an API call)
-    const isDetailed = originalPrompt.length > 80 && originalPrompt.split(/\s+/).length > 12;
-    let finalPrompt = originalPrompt;
-
-    if (isDetailed && model.mode !== "edit") {
-      console.log(`[HER Imagine] Prompt already detailed (${originalPrompt.length} chars) — skipping enhancement`);
-    } else {
-      try {
-        const enhancerMessages =
-          model.mode === "edit"
-            ? buildEditPromptEnhancerMessages(originalPrompt)
-            : buildImagePromptEnhancerMessages(originalPrompt);
-
-        const enhanced = await nvidiaChat(enhancerMessages, {
-          maxTokens: short ? 400 : 300,
-          temperature: model.mode === "edit" ? 0.4 : short ? 0.68 : 0.6,
-          topP: 0.9,
-        });
-        finalPrompt = enhanced.replace(/^"|"$/g, "").trim() || originalPrompt;
-        console.log(`[HER Imagine] Enhanced prompt: "${finalPrompt.slice(0, 120)}"`);
-      } catch (enhanceErr) {
-        console.warn(
-          "[HER Imagine] Prompt enhancement failed, using original:",
-          enhanceErr instanceof Error ? enhanceErr.message : enhanceErr
-        );
-      }
-    }
-
-    // ── Step 2: Build payload from model registry ──
-    const payload = buildImagePayload(model, {
-      prompt: finalPrompt,
-      aspect_ratio: body.aspect_ratio,
-      steps: body.steps,
-      cfg_scale: body.cfg_scale,
-      negative_prompt: body.negative_prompt,
-      seed: body.seed,
-      image: normalizedImage,  // already normalized for edit mode
-    });
-
-    // Strip any undefined/null/empty-string values to keep the payload clean
-    const cleanPayload: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(payload)) {
-      if (v !== undefined && v !== null && v !== "") {
-        cleanPayload[k] = v;
-      }
-    }
-
-    // ── Validate resolved dimensions for width_height models ──
-    if (model.capabilities.width_height) {
-      const w = cleanPayload.width;
-      const h = cleanPayload.height;
-      if (typeof w !== "number" || typeof h !== "number" || w < 64 || h < 64) {
-        return imageError(
-          `Image generation failed (400): Invalid image dimensions (${w}×${h})`,
-          400, model.id
-        );
-      }
-    }
-
-    console.log(
-      `[HER Imagine] Sending to ${model.label} (${model.id}): ${JSON.stringify(cleanPayload).slice(0, 300)}`
-    );
-
-    // ── Step 3: Call NVIDIA endpoint ──
-    const requestHeaders: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      Accept: "application/json",
-    };
-    // Include NVCF asset reference header when using the asset upload flow
-    if (nvcfAssetId) {
-      requestHeaders["NVCF-INPUT-ASSET-REFERENCES"] = nvcfAssetId;
-    }
-
-    const res = await fetch(model.endpoint, {
-      method: "POST",
-      headers: requestHeaders,
-      body: JSON.stringify(cleanPayload),
-    });
-
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      console.error(
-        `[HER Imagine] NVIDIA error (${model.label} / ${model.id}):\n` +
-        `  Status: ${res.status}\n` +
-        `  Endpoint: ${model.endpoint}\n` +
-        `  Body: ${errBody.slice(0, 500)}`
-      );
-
-      // Parse provider error detail if possible
-      let detail = "";
-      try {
-        const parsed = JSON.parse(errBody);
-        detail = parsed?.detail || parsed?.error?.message || parsed?.message || "";
-        if (typeof detail === "object") detail = JSON.stringify(detail).slice(0, 200);
-      } catch { /* not JSON */ }
-
-      const prefix = model.mode === "edit" ? "Image edit" : "Image generation";
-
-      if (res.status === 429) {
-        return imageError(`${prefix} rate limited — try again in about 30 seconds.`, 429, model.id);
-      }
-      if (res.status === 401 || res.status === 403) {
-        return imageError(`API key unauthorized for ${model.label}. Check ${model.envKey}.`, res.status, model.id);
-      }
-      if (res.status === 404) {
-        return imageError(`Model endpoint unavailable: ${model.id}. The model may not be supported.`, 404, model.id);
-      }
-      if (res.status === 422) {
-        return imageError(
-          `${prefix} failed (422): ${detail || "The provider rejected the request payload."}`,
-          422, model.id
-        );
-      }
-      if (res.status === 503 || res.status === 502) {
-        return imageError(`Image service unavailable (${res.status}). Try again shortly.`, res.status, model.id);
-      }
-
-      return imageError(
-        `${prefix} failed (${res.status}): ${detail || errBody.slice(0, 120) || "unknown error"}`,
-        502, model.id
-      );
-    }
-
-    // ── Step 4: Extract image from response ──
-    const data = await res.json();
-    const { image: base64Image, shape: matchedShape } = extractBase64Image(data);
-
-    if (!base64Image) {
-      console.error(
-        `[HER Imagine] Unexpected response shape (${model.label} / ${model.id}):\n` +
-        `  Keys: ${Object.keys(data).join(", ")}\n` +
-        `  Snippet: ${JSON.stringify(data).slice(0, 300)}`
-      );
-      return imageError(
-        `Image generation failed (502): Unexpected response format from image provider`,
-        502, model.id
-      );
-    }
-
-    // Dev-only success breadcrumb
-    console.log(
-      `[HER Image] model=${model.id} mode=${model.mode} status=success shape=${matchedShape} b64len=${base64Image.length}`
-    );
-
-    // Return as data URL
-    const dataUrl = `data:image/jpeg;base64,${base64Image}`;
-
-    // Include revisedPrompt metadata when enhancement meaningfully changed the prompt
-    const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
-    const response: Record<string, string> = { image: dataUrl };
-    if (norm(finalPrompt) !== norm(originalPrompt)) {
-      response.revisedPrompt = finalPrompt;
-    }
-
-    // Fire-and-forget NVCF asset cleanup (don't block the response)
-    if (nvcfAssetId) {
-      deleteNvcfAsset(nvcfAssetId, apiKey).catch(() => {});
-    }
-
-    return NextResponse.json(response);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Unknown error";
-    console.error("[HER Imagine] Unhandled error:", msg);
-    return imageError(`Image generation error: ${msg}`, 502);
-  }
-}
-
 // ── NVCF Asset Upload Helpers ──────────────────────────────
 
-const NVCF_ASSETS_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets";
+export const NVCF_ASSETS_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets";
 
 /**
  * Upload a base64-encoded image to NVCF as a temporary asset.
@@ -332,9 +51,10 @@ const NVCF_ASSETS_URL = "https://api.nvcf.nvidia.com/v2/nvcf/assets";
  *   1. POST to NVCF assets API to create an asset slot → { uploadUrl, assetId }
  *   2. PUT the raw image bytes to the presigned S3 URL
  */
-async function uploadNvcfAsset(
+export async function uploadNvcfAsset(
   base64Image: string,
-  apiKey: string
+  apiKey: string,
+  contentType = "image/jpeg"
 ): Promise<{ assetId: string }> {
   // Step 1: Create the asset
   const createRes = await fetch(NVCF_ASSETS_URL, {
@@ -344,7 +64,7 @@ async function uploadNvcfAsset(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      contentType: "image/jpeg",
+      contentType,
       description: "her-image-edit-source",
     }),
   });
@@ -364,7 +84,7 @@ async function uploadNvcfAsset(
   const uploadRes = await fetch(uploadUrl, {
     method: "PUT",
     headers: {
-      "Content-Type": "image/jpeg",
+      "Content-Type": contentType,
       "x-amz-meta-nvcf-asset-description": "her-image-edit-source",
     },
     body: imageBuffer,
@@ -382,7 +102,7 @@ async function uploadNvcfAsset(
  * Delete an NVCF asset after use (fire-and-forget).
  * Failure is non-critical — assets expire automatically.
  */
-async function deleteNvcfAsset(assetId: string, apiKey: string): Promise<void> {
+export async function deleteNvcfAsset(assetId: string, apiKey: string): Promise<void> {
   try {
     await fetch(`${NVCF_ASSETS_URL}/${assetId}`, {
       method: "DELETE",
@@ -398,7 +118,7 @@ async function deleteNvcfAsset(assetId: string, apiKey: string): Promise<void> {
  * Different models return data in different shapes.
  * Returns { image, shape } so callers can log which format matched.
  */
-function extractBase64Image(data: Record<string, unknown>): { image: string | null; shape: string } {
+export function extractBase64Image(data: Record<string, unknown>): { image: string | null; shape: string } {
   // Format: { image: "<base64>" }
   if (typeof data?.image === "string" && (data.image as string).length > 100) {
     return { image: data.image as string, shape: "image" };
@@ -438,4 +158,310 @@ function extractBase64Image(data: Record<string, unknown>): { image: string | nu
   }
 
   return { image: null, shape: "none" };
+}
+
+// ── Core generation function (reusable by POST and auto pipeline) ──────────
+
+export interface GenerateImageOptions {
+  prompt: string;
+  modelId?: string;
+  mode?: "create" | "edit";
+  aspect_ratio?: string;
+  steps?: number;
+  cfg_scale?: number;
+  negative_prompt?: string;
+  seed?: number;
+  /** Base64 data URL for edit mode */
+  image?: string;
+  /** Override MIME type for NVCF asset upload (e.g. "image/png") */
+  imageMimeType?: string;
+}
+
+export interface GenerateImageResult {
+  image: string | null;
+  revisedPrompt?: string;
+  error?: string;
+  status?: number;
+}
+
+/**
+ * Core image generation logic — shared by the POST route and the auto pipeline.
+ *
+ * Does NOT handle HTTP — returns a plain result object.
+ * Throws are caught and returned as { error, status }.
+ */
+export async function generateImageCore(
+  opts: GenerateImageOptions
+): Promise<GenerateImageResult> {
+  const prompt = opts.prompt?.trim();
+  if (!prompt) {
+    return { image: null, error: "Missing prompt", status: 400 };
+  }
+
+  const requestMode = opts.mode || "create";
+  let modelId = opts.modelId;
+  if (!modelId) {
+    modelId = requestMode === "edit" ? DEFAULT_EDIT_MODEL_ID : DEFAULT_CREATE_MODEL_ID;
+  }
+
+  if (!isValidModelId(modelId)) {
+    return { image: null, error: `Unknown model '${modelId}'`, status: 400 };
+  }
+
+  const model = getImageModel(modelId)!;
+
+  if (model.mode !== requestMode) {
+    return {
+      image: null,
+      error: `Model ${model.id} is for ${model.mode} mode, not ${requestMode}.`,
+      status: 400,
+    };
+  }
+
+  const apiKey = resolveApiKey(model);
+  if (!apiKey) {
+    console.error(
+      `[HER Imagine] Missing API key for ${model.label} (${model.envKey}).`
+    );
+    return {
+      image: null,
+      error: `API key missing for ${model.label}. Configure ${model.envKey}.`,
+      status: 500,
+    };
+  }
+
+  // ── Validate and prepare source image for edit mode ──
+  let normalizedImage: string | undefined;
+  let nvcfAssetId: string | undefined;
+
+  if (model.mode === "edit") {
+    if (!opts.image) {
+      return { image: null, error: "Missing source image for edit mode", status: 400 };
+    }
+    const safe = normalizeBase64Image(opts.image);
+    if (!safe) {
+      return { image: null, error: "Invalid image payload", status: 400 };
+    }
+
+    if (model.capabilities.image_input) {
+      try {
+        const mimeType = opts.imageMimeType ?? "image/jpeg";
+        const assetResult = await uploadNvcfAsset(safe, apiKey, mimeType);
+        nvcfAssetId = assetResult.assetId;
+        normalizedImage = `data:image/jpeg;example_id,${assetResult.assetId}`;
+        console.log(`[HER Imagine] NVCF asset uploaded: ${assetResult.assetId}`);
+      } catch (uploadErr) {
+        console.error(
+          "[HER Imagine] NVCF asset upload failed:",
+          uploadErr instanceof Error ? uploadErr.message : uploadErr
+        );
+        return {
+          image: null,
+          error: "Unable to prepare source image for processing.",
+          status: 502,
+        };
+      }
+    } else {
+      normalizedImage = safe;
+    }
+  }
+
+  const originalPrompt = prompt;
+  const short = isShortPrompt(originalPrompt);
+  console.log(
+    `[HER Imagine] Model: ${model.label} | Mode: ${model.mode} | Short: ${short} | Prompt: "${originalPrompt.slice(0, 80)}"`
+  );
+
+  // ── Enhance the prompt via Mistral ──
+  const isDetailed =
+    originalPrompt.length > 80 && originalPrompt.split(/\s+/).length > 12;
+  let finalPrompt = originalPrompt;
+
+  if (isDetailed && model.mode !== "edit") {
+    console.log(`[HER Imagine] Prompt already detailed — skipping enhancement`);
+  } else {
+    try {
+      const enhancerMessages =
+        model.mode === "edit"
+          ? buildEditPromptEnhancerMessages(originalPrompt)
+          : buildImagePromptEnhancerMessages(originalPrompt);
+
+      const enhanced = await nvidiaChat(enhancerMessages, {
+        maxTokens: short ? 400 : 300,
+        temperature: model.mode === "edit" ? 0.4 : short ? 0.68 : 0.6,
+        topP: 0.9,
+      });
+      finalPrompt = enhanced.replace(/^"|"$/g, "").trim() || originalPrompt;
+      console.log(`[HER Imagine] Enhanced prompt: "${finalPrompt.slice(0, 120)}"`);
+    } catch (enhanceErr) {
+      console.warn(
+        "[HER Imagine] Prompt enhancement failed, using original:",
+        enhanceErr instanceof Error ? enhanceErr.message : enhanceErr
+      );
+    }
+  }
+
+  // ── Build payload from model registry ──
+  const payload = buildImagePayload(model, {
+    prompt: finalPrompt,
+    aspect_ratio: opts.aspect_ratio,
+    steps: opts.steps,
+    cfg_scale: opts.cfg_scale,
+    negative_prompt: opts.negative_prompt,
+    seed: opts.seed,
+    image: normalizedImage,
+  });
+
+  const cleanPayload: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v !== undefined && v !== null && v !== "") {
+      cleanPayload[k] = v;
+    }
+  }
+
+  if (model.capabilities.width_height) {
+    const w = cleanPayload.width;
+    const h = cleanPayload.height;
+    if (typeof w !== "number" || typeof h !== "number" || w < 64 || h < 64) {
+      return {
+        image: null,
+        error: `Invalid image dimensions (${w}×${h})`,
+        status: 400,
+      };
+    }
+  }
+
+  // ── Call NVIDIA endpoint ──
+  const requestHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    Accept: "application/json",
+  };
+  if (nvcfAssetId) {
+    requestHeaders["NVCF-INPUT-ASSET-REFERENCES"] = nvcfAssetId;
+  }
+
+  console.log(
+    `[HER Imagine] Sending to ${model.label}: ${JSON.stringify(cleanPayload).slice(0, 300)}`
+  );
+
+  const res = await fetch(model.endpoint, {
+    method: "POST",
+    headers: requestHeaders,
+    body: JSON.stringify(cleanPayload),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    console.error(
+      `[HER Imagine] NVIDIA error (${model.label}):\n  Status: ${res.status}\n  Body: ${errBody.slice(0, 500)}`
+    );
+
+    let detail = "";
+    try {
+      const parsed = JSON.parse(errBody);
+      detail = parsed?.detail || parsed?.error?.message || parsed?.message || "";
+      if (typeof detail === "object") detail = JSON.stringify(detail).slice(0, 200);
+    } catch { /* not JSON */ }
+
+    const prefix = model.mode === "edit" ? "Image edit" : "Image generation";
+
+    if (res.status === 429) {
+      return { image: null, error: `${prefix} rate limited — try again in about 30 seconds.`, status: 429 };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { image: null, error: `API key unauthorized for ${model.label}.`, status: res.status };
+    }
+    if (res.status === 404) {
+      return { image: null, error: `Model endpoint unavailable: ${model.id}.`, status: 404 };
+    }
+    if (res.status === 422) {
+      return { image: null, error: `${prefix} failed (422): ${detail || "The provider rejected the request payload."}`, status: 422 };
+    }
+    if (res.status === 503 || res.status === 502) {
+      return { image: null, error: `Image service unavailable (${res.status}). Try again shortly.`, status: res.status };
+    }
+    return { image: null, error: `${prefix} failed (${res.status}): ${detail || "unknown error"}`, status: 502 };
+  }
+
+  // ── Extract image from response ──
+  const data = await res.json();
+  const { image: base64Image, shape: matchedShape } = extractBase64Image(data);
+
+  if (!base64Image) {
+    console.error(
+      `[HER Imagine] Unexpected response shape (${model.id}): Keys: ${Object.keys(data).join(", ")}`
+    );
+    return { image: null, error: "Unexpected response format from image provider", status: 502 };
+  }
+
+  console.log(
+    `[HER Image] model=${model.id} mode=${model.mode} status=success shape=${matchedShape} b64len=${base64Image.length}`
+  );
+
+  const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  const result: GenerateImageResult = { image: dataUrl };
+  if (norm(finalPrompt) !== norm(originalPrompt)) {
+    result.revisedPrompt = finalPrompt;
+  }
+
+  // Fire-and-forget NVCF asset cleanup
+  if (nvcfAssetId) {
+    deleteNvcfAsset(nvcfAssetId, apiKey).catch(() => {});
+  }
+
+  return result;
+}
+
+/**
+ * POST /api/imagine
+ *
+ * Unified image generation pipeline — unchanged public contract.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const auth = await validateApiRequest(req);
+    if (auth.error) return auth.error;
+
+    const sizeError = checkBodySize(req);
+    if (sizeError) return sizeError;
+
+    const body = (await req.json()) as ImageGenerationRequest;
+
+    const prompt = body.prompt?.trim();
+    if (!prompt || typeof prompt !== "string" || prompt.length === 0) {
+      return imageError("Image generation failed (400): Missing prompt", 400);
+    }
+
+    const result = await generateImageCore({
+      prompt,
+      modelId: body.modelId,
+      mode: body.mode,
+      aspect_ratio: body.aspect_ratio,
+      steps: body.steps,
+      cfg_scale: body.cfg_scale,
+      negative_prompt: body.negative_prompt,
+      seed: body.seed,
+      image: body.image,
+    });
+
+    if (!result.image) {
+      return imageError(
+        result.error ?? "Image generation failed",
+        result.status ?? 502,
+        body.modelId
+      );
+    }
+
+    const response: Record<string, string> = { image: result.image };
+    if (result.revisedPrompt) response.revisedPrompt = result.revisedPrompt;
+
+    return NextResponse.json(response);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error("[HER Imagine] Unhandled error:", msg);
+    return imageError(`Image generation error: ${msg}`, 502);
+  }
 }

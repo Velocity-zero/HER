@@ -122,6 +122,54 @@ export interface ImageGenerationResponse {
   revisedPrompt?: string;
 }
 
+// ── Auto Image Pipeline Types ─────────────────────────────
+
+/** Structured result from the LLM intent classifier */
+export interface ImageIntent {
+  should_generate: boolean;
+  /** Classifier confidence 0–1 */
+  confidence: number;
+  /** Null when should_generate is false */
+  image_type: "self_portrait" | "creative" | "casual" | "realistic_scene" | null;
+  /** Enriched prompt ready for the image model */
+  refined_prompt: string;
+  /** Recommended aspect ratio */
+  aspect_ratio: "1:1" | "4:5" | "3:4" | "16:9" | "9:16";
+  /** Human-readable reason for logging/debug */
+  reason: string;
+}
+
+/** Result from the vision-LLM quality verifier */
+export interface VerifierResult {
+  /** Quality score 0–10 */
+  score: number;
+  /** True if score meets the configured threshold */
+  pass: boolean;
+  /** List of detected issue codes */
+  issues: string[];
+  /** Short human-readable summary */
+  notes: string;
+}
+
+/** Response from POST /api/imagine/auto */
+export interface AutoImageResult {
+  /** Whether an image was generated */
+  generated: boolean;
+  /** Base64 data URL or Supabase storage URL of the generated image */
+  image?: string;
+  /** LLM-generated contextual delivery caption */
+  caption?: string;
+  /** The enhanced prompt actually used */
+  revisedPrompt?: string;
+  /** Debug info (intent, model, score, attempts) */
+  debug?: {
+    intent: ImageIntent;
+    modelId: string;
+    score: number;
+    attempts: number;
+  };
+}
+
 /** State for the Image Studio advanced controls */
 export interface ImageStudioState {
   mode: ImageStudioMode;
