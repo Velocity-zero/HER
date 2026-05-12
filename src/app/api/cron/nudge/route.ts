@@ -28,7 +28,13 @@ import { getNotificationSettings, isQuietHours } from "@/lib/notification-settin
 import {
   buildConversationLifecycle,
   canUseContinuityStyle,
+  getOutreachProbability,
 } from "@/lib/conversation-lifecycle";
+import {
+  canSendSpontaneousOutreach,
+  briefForOutreach,
+} from "@/lib/nudge-logic";
+import { countIgnoredLowPriority24h } from "@/lib/scheduled-events";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { sendPushNotification } from "@/lib/push";
 import { debug } from "@/lib/debug";
@@ -172,6 +178,33 @@ export async function GET(req: NextRequest) {
         { userId, convoId, lastInteractionAt: lifecycle.lastInteractionAt },
       );
 
+      // ── Step 17.8: Spontaneous outreach eligibility + decay roll ──
+      // Adds natural randomness so silence has texture instead of binary states.
+      // Upstream gates (notifications, quiet, nudge cap, fatigue) already ran;
+      // this layer adds (a) a per-state allow/deny and (b) a probability roll
+      // so HER doesn't ping every eligible user every tick.
+      const ignored24hForSpont = await countIgnoredLowPriority24h(userId);
+      const spont = canSendSpontaneousOutreach({
+        lifecycle,
+        ignoredCount24h: ignored24hForSpont,
+        notificationsEnabled: settings.notifications_enabled,
+      });
+      if (!spont.allowed) {
+        console.log(`[HER Outreach] suppressed=${spont.suppressedReason}`, { userId });
+        skipped++;
+        continue;
+      }
+      const outreachProb = getOutreachProbability(lastInteractionDate);
+      if (Math.random() >= outreachProb) {
+        console.log(`[HER Outreach] suppressed=decay`, { userId, prob: outreachProb });
+        skipped++;
+        continue;
+      }
+      console.log(
+        `[HER Outreach] type=${spont.outreachType} spontaneous=true`,
+        { userId, prob: outreachProb },
+      );
+
       if (convoId && continuityAllowed) {
         // Get last few messages for context
         const { data: lastMsgs } = await client
@@ -197,8 +230,9 @@ export async function GET(req: NextRequest) {
 
       // Fall back to a fresh-opener nudge when continuity isn't allowed,
       // when we had no convo, or when the smart re-engagement returned null.
+      // Step 17.8: pass the matching brief so the LLM doesn't fake continuity.
       if (!messageText) {
-        messageText = await buildNudgeMessage(apiKey);
+        messageText = await buildNudgeMessage(apiKey, briefForOutreach(spont.outreachType));
       }
 
       // Insert the nudge as a message (with context tag — Part F)

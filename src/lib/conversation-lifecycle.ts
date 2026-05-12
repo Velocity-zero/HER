@@ -93,3 +93,46 @@ export function canUseContinuityStyle(
   const state = typeof lifecycle === "string" ? lifecycle : lifecycle.state;
   return state === "active" || state === "cooling";
 }
+
+// ── Step 17.8 — Outreach Type & Decay Probability ──────────
+
+/**
+ * Two distinct kinds of outreach a real person makes:
+ *   - "continuity": a continuation of an existing emotional thread
+ *   - "fresh": a spontaneous re-opening with no pretense of continuity
+ */
+export type OutreachType = "continuity" | "fresh";
+
+/**
+ * Map a lifecycle state to the kind of outreach that would feel natural.
+ * active/cooling threads get continuity; dormant/reengageable get fresh.
+ */
+export function getOutreachType(
+  lifecycle: ConversationLifecycle | ConversationState,
+): OutreachType {
+  return canUseContinuityStyle(lifecycle) ? "continuity" : "fresh";
+}
+
+/**
+ * Probability that HER would *spontaneously* reach out at this moment,
+ * decaying naturally with silence. Used as a randomness gate so the cron
+ * doesn't ping every eligible user every tick.
+ *
+ * Curve (matches Step 17.8 §5):
+ *   <24h        → 1.00   (would normally already be in chat — unreachable from cron)
+ *   24h–48h     → 0.70   (moderate continuity)
+ *   48h–72h     → 0.30   (low continuity / dormant)
+ *   72h–7d      → 0.15   (occasional fresh outreach)
+ *   >7d         → 0.04   (very rare)
+ */
+export function getOutreachProbability(
+  lastInteractionAt: Date,
+  now: Date = new Date(),
+): number {
+  const ageMs = Math.max(0, now.getTime() - lastInteractionAt.getTime());
+  if (ageMs < ACTIVE_WINDOW_MS) return 1.0;
+  if (ageMs < CONTINUITY_WINDOW_MS) return 0.7;
+  if (ageMs < DORMANT_WINDOW_MS) return 0.3;
+  if (ageMs < 7 * 24 * HOUR_MS) return 0.15;
+  return 0.04;
+}

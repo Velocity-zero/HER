@@ -180,8 +180,17 @@ Rules:
 
 Return ONLY the message text.`;
 
-export async function buildNudgeMessage(apiKey: string): Promise<string> {
+export async function buildNudgeMessage(
+  apiKey: string,
+  extraBrief?: string,
+): Promise<string> {
   const { NVIDIA_CHAT_URL, NVIDIA_CHAT_MODEL } = await import("./provider");
+
+  // Step 17.8: optional brief lets the caller route fresh-vs-continuity
+  // intent into the system prompt without forking the whole function.
+  const systemPrompt = extraBrief
+    ? `${NUDGE_SYSTEM_PROMPT}\n\n${extraBrief}`
+    : NUDGE_SYSTEM_PROMPT;
 
   try {
     const res = await fetch(NVIDIA_CHAT_URL, {
@@ -193,7 +202,7 @@ export async function buildNudgeMessage(apiKey: string): Promise<string> {
       body: JSON.stringify({
         model: NVIDIA_CHAT_MODEL,
         messages: [
-          { role: "system", content: NUDGE_SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           { role: "user", content: "Generate a casual re-engagement message." },
         ],
         max_tokens: 60,
