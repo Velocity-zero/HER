@@ -25,6 +25,10 @@ import { buildNudgeMessage } from "@/lib/notification-messages";
 import { generateReengagement } from "@/lib/reengagement-intelligence";
 import { getInteractionPattern } from "@/lib/interaction-patterns";
 import { getNotificationSettings, isQuietHours } from "@/lib/notification-settings";
+import {
+  buildConversationLifecycle,
+  canUseContinuityStyle,
+} from "@/lib/conversation-lifecycle";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { sendPushNotification } from "@/lib/push";
 import { debug } from "@/lib/debug";
@@ -128,24 +132,47 @@ export async function GET(req: NextRequest) {
       // Otherwise it's a standard inactivity nudge
 
       // ── All checks passed — generate smart re-engagement (Step 21 Part F) ──
-      // Try context-aware re-engagement first, fall back to generic nudge
+      // Step 17.7: route by conversation lifecycle.
+      //   active/cooling → continuity-style (reference recent thread)
+      //   dormant/reengageable → cold opener (no stale thread references)
       let messageText: string | null = null;
 
       // Fetch last messages for context-aware generation
       const targetConvoId = dropoff?.lastConversationId ?? null;
       let convoId = targetConvoId;
+      let lastMessageAtIso: string | null = null;
       if (!convoId) {
         const { data: recentConvo } = await client
           .from("conversations")
-          .select("id")
+          .select("id, last_message_at")
           .eq("user_id", userId)
           .order("last_message_at", { ascending: false })
           .limit(1)
           .single();
         convoId = recentConvo?.id ?? null;
+        lastMessageAtIso = (recentConvo?.last_message_at as string | undefined) ?? null;
+      } else {
+        const { data: convoRow } = await client
+          .from("conversations")
+          .select("last_message_at")
+          .eq("id", convoId)
+          .single();
+        lastMessageAtIso = (convoRow?.last_message_at as string | undefined) ?? null;
       }
 
-      if (convoId) {
+      // Step 17.7: lifecycle decision (default to reengageable if we have no
+      // timestamp — safer to send a cold opener than to fake continuity).
+      const lastInteractionDate = lastMessageAtIso
+        ? new Date(lastMessageAtIso)
+        : new Date(Date.now() - 73 * 60 * 60 * 1000);
+      const lifecycle = buildConversationLifecycle(lastInteractionDate);
+      const continuityAllowed = canUseContinuityStyle(lifecycle);
+      console.log(
+        `[HER Lifecycle] state=${lifecycle.state} continuity=${continuityAllowed}`,
+        { userId, convoId, lastInteractionAt: lifecycle.lastInteractionAt },
+      );
+
+      if (convoId && continuityAllowed) {
         // Get last few messages for context
         const { data: lastMsgs } = await client
           .from("messages")
@@ -168,7 +195,8 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Fall back to generic nudge if smart re-engagement returned null
+      // Fall back to a fresh-opener nudge when continuity isn't allowed,
+      // when we had no convo, or when the smart re-engagement returned null.
       if (!messageText) {
         messageText = await buildNudgeMessage(apiKey);
       }
