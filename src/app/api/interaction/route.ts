@@ -15,6 +15,8 @@ import {
   getRecentInteractionSignals,
   formatSignalsForPrompt,
 } from "@/lib/interaction-signals";
+import { loadSelfState } from "@/lib/self-state-store";
+import { decaySyntheticSelfState, buildSelfStateBrief } from "@/lib/self-model";
 
 export async function GET(req: NextRequest) {
   try {
@@ -41,7 +43,26 @@ export async function GET(req: NextRequest) {
       limit,
     });
 
-    const interactionContext = formatSignalsForPrompt(signals);
+    const signalsBlock = formatSignalsForPrompt(signals);
+
+    // ── Step 18.X: append HER's synthetic self-state brief ──
+    // Read → apply read-time decay → derive brief. The brief is null when
+    // nothing distinctive is going on, so we never inject filler.
+    let selfBlock: string | null = null;
+    try {
+      const { state, lastUpdated } = await loadSelfState(userId);
+      const decayed = lastUpdated
+        ? decaySyntheticSelfState(state, lastUpdated)
+        : state;
+      selfBlock = buildSelfStateBrief(decayed);
+    } catch {
+      // Self-state is non-essential — silent fallback.
+      selfBlock = null;
+    }
+
+    const interactionContext = [signalsBlock, selfBlock]
+      .filter((s): s is string => Boolean(s))
+      .join("\n\n") || null;
 
     return NextResponse.json({ interactionContext });
   } catch (err) {

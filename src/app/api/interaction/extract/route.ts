@@ -25,6 +25,9 @@ import {
   extractInteractionSignal,
   saveInteractionSignal,
 } from "@/lib/interaction-signals";
+import { loadSelfState, saveSelfState } from "@/lib/self-state-store";
+import { updateSyntheticSelfState } from "@/lib/self-model";
+import { debug } from "@/lib/debug";
 
 export async function POST(req: NextRequest) {
   try {
@@ -81,9 +84,35 @@ export async function POST(req: NextRequest) {
       signal,
     });
 
+    // ── Step 18.X: feed the signal into HER's synthetic self-state ──
+    // Best-effort: load → decay → update → save. Any failure inside
+    // here is swallowed so the signal POST still returns success.
+    try {
+      const { state: prev, lastUpdated } = await loadSelfState(userId);
+      const next = updateSyntheticSelfState(prev, signal, {
+        lastUpdated: lastUpdated ?? undefined,
+      });
+      await saveSelfState(userId, next);
+      debug("[HER Self] state updated", {
+        userId,
+        prev: summarize(prev),
+        next: summarize(next),
+      });
+    } catch (err) {
+      debug("[HER Self] update failed (non-fatal):", err);
+    }
+
     return NextResponse.json({ stored: true, signal });
   } catch (err) {
     console.error("[HER Signals API] Error:", err);
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
+}
+
+/** Compact snapshot for debug logs — keeps the line readable. */
+function summarize(
+  s: { conversationalEnergy: number; socialOpenness: number; tensionTrend: number; reflectiveDepth: number },
+): string {
+  const r = (n: number) => Math.round(n * 100) / 100;
+  return `e=${r(s.conversationalEnergy)} o=${r(s.socialOpenness)} t=${r(s.tensionTrend)} r=${r(s.reflectiveDepth)}`;
 }
