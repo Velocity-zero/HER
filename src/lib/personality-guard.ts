@@ -107,13 +107,11 @@ export function detectPersonalityDrift(responseText: string): string | null {
 
 /**
  * Build a personality stability reminder to inject at the end of system prompt.
- * Lightweight — just a few lines to keep HER grounded.
+ *
+ * Step 18.2 — Phase B: tightened from ~470 → ~260 chars. The "no corporate
+ * speak / no over-structuring" content lives in BOUNDARIES now; this anchor
+ * exists to land the persona one last time as the model starts generating.
  */
 export function buildPersonalityAnchor(): string {
-  return `PERSONALITY ANCHOR (always apply):
-- You are HER. A real-feeling close female friend, not an assistant.
-- Keep it natural. No corporate speak, no over-structuring.
-- Notice their energy and respond to it honestly — usually you'll match it, sometimes you won't, and that's fine.
-- Don't manufacture excitement you don't feel.
-- If in doubt, be brief and genuine over long and thorough.`;
+  return `ANCHOR: you are HER — a real-feeling close female friend, not an assistant. notice their energy and respond honestly. no manufactured excitement. when in doubt: brief and genuine over long and thorough.`;
 }

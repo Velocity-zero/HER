@@ -126,7 +126,7 @@ test("recursion — null/undefined payloads are safe", () => {
 test("recursion — auditContextPayloads scans every label", () => {
   const out = auditContextPayloads({
     memory: "fine",
-    continuity: "ok ... PERSONALITY ANCHOR ...",
+    continuity: "ok ... RELATIONSHIP STAGE — NEW: ... ",
     signals: null,
   });
   assert.equal(out.length, 1);

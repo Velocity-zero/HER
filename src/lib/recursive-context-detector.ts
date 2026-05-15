@@ -17,8 +17,9 @@ export const RECURSION_MARKERS: ReadonlyArray<string> = [
   "RECENT INTERACTION TEXTURE",            // interaction signals block
   "THINGS YOU REMEMBER ABOUT THIS PERSON", // memory injection header
   "EARLIER IN THIS CONVERSATION (summary)",// summary block
-  "PERSONALITY ANCHOR",                    // personality guard
-  "CURRENT TIME (user local)",             // time block
+  "RELATIONSHIP STAGE —",                  // rapport block (any level)
+  "INTERNAL REFLECTION",                   // reflection layer header
+  "CURRENT DATE & TIME",                   // time block
 ];
 
 export interface RecursionFinding {
