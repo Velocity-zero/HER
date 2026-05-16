@@ -2,7 +2,15 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import { Message } from "@/lib/types";
-import { generateId, loadSession, saveMessages, clearSession } from "@/lib/chat-store";
+import {
+  generateId,
+  loadSession,
+  saveMessages,
+  clearSession,
+  saveConversationGreeting,
+  loadConversationGreeting,
+  clearConversationGreeting,
+} from "@/lib/chat-store";
 import { createSurfaceCopyBundle, GREETING_POOL, type SurfaceCopyBundle } from "@/lib/surface-copy";
 import { buildContinuity, buildContinuityBlock } from "@/lib/continuity";
 import { analyzeInteractionPattern, saveInteractionPattern } from "@/lib/interaction-patterns";
@@ -720,13 +728,26 @@ export default function ChatPage() {
       countConversationMessages(conversationId),
     ]);
 
+    // Per-convo greeting: re-prepend HER's opening line so reload / convo
+    // switch / notification-tap don't strip it. Stored client-side because
+    // the greeting isn't a real DB message — see chat-store.ts for rationale.
+    const storedGreeting = loadConversationGreeting(conversationId);
+
     if (dbMessages.length > 0) {
       const uiMessages: Message[] = dbMessages.map(dbMessageToUiMessage);
+      if (storedGreeting) {
+        console.log("[HER Hydration] prepending stored greeting", { conversationId, dbCount: uiMessages.length });
+        uiMessages.unshift(createGreeting(storedGreeting));
+      } else {
+        console.log("[HER Hydration] no stored greeting for convo", { conversationId, dbCount: uiMessages.length });
+      }
       setMessages(uiMessages);
       setHasMoreMessages(total > dbMessages.length);
     } else {
       // Conversation exists but has no messages — show greeting
-      setMessages([createGreeting(surfaceCopyRef.current.greeting)]);
+      const greetingText = storedGreeting ?? surfaceCopyRef.current.greeting;
+      console.log("[HER Hydration] empty convo, showing greeting", { conversationId, fromStorage: !!storedGreeting });
+      setMessages([createGreeting(greetingText)]);
       setHasMoreMessages(false);
     }
 
@@ -915,6 +936,15 @@ export default function ChatPage() {
       if (convoId) {
         setActiveConvoId(convoId);
         setActiveConversationId(convoId);
+        // Pin the greeting to this conversation in localStorage so reload /
+        // convo-switch / notification-tap can re-prepend it. Without this,
+        // loadConversationMessages would replace [greeting, user, reply]
+        // with just [user, reply] from the DB.
+        const currentGreeting = messagesRef.current[0];
+        if (currentGreeting?.id === "greeting" && currentGreeting.content) {
+          console.log("[HER Bootstrap] persisting greeting for new convo", { convoId });
+          saveConversationGreeting(convoId, currentGreeting.content);
+        }
       }
     } else {
       // ── Smart session title: update title from first real user message ──
@@ -1582,6 +1612,11 @@ export default function ChatPage() {
       if (convoId) {
         setActiveConvoId(convoId);
         setActiveConversationId(convoId);
+        const currentGreeting = messagesRef.current[0];
+        if (currentGreeting?.id === "greeting" && currentGreeting.content) {
+          console.log("[HER Bootstrap] persisting greeting for new convo (image branch)", { convoId });
+          saveConversationGreeting(convoId, currentGreeting.content);
+        }
       }
     } else {
       maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
@@ -1738,6 +1773,8 @@ export default function ChatPage() {
       if (success) {
         // Remove from local list
         setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+        // Drop the per-convo greeting key — no orphan localStorage entries.
+        clearConversationGreeting(conversationId);
 
         // If we just deleted the active conversation, reset to a fresh chat
         if (conversationId === activeConvoId) {

@@ -169,3 +169,36 @@ export function clearSession(): void {
     localStorage.removeItem(STORAGE_KEY);
   } catch { /* noop */ }
 }
+
+// ── Per-conversation greeting persistence ──────────────────
+//
+// HER's opening message is a stylistic affordance and is intentionally NOT
+// written to Supabase (it'd collide with ~9 `id !== "greeting"` filters that
+// keep it out of memory extraction, anti-repetition, continuity, etc.). But
+// because every code path that hydrates a conversation from the DB
+// unconditionally calls `setMessages(dbMessages)`, the greeting was getting
+// wiped on reload / convo-switch / notification-tap. We pin it per-convo in
+// localStorage and re-prepend it on load. Per-device only (acceptable for a
+// stylistic opener — never claimed to be server truth).
+const GREETING_KEY_PREFIX = "her-greeting:";
+
+export function saveConversationGreeting(convoId: string, text: string): void {
+  if (typeof window === "undefined" || !convoId || !text) return;
+  try {
+    localStorage.setItem(`${GREETING_KEY_PREFIX}${convoId}`, text);
+  } catch { /* quota / privacy mode — best-effort */ }
+}
+
+export function loadConversationGreeting(convoId: string): string | null {
+  if (typeof window === "undefined" || !convoId) return null;
+  try {
+    return localStorage.getItem(`${GREETING_KEY_PREFIX}${convoId}`);
+  } catch { return null; }
+}
+
+export function clearConversationGreeting(convoId: string): void {
+  if (typeof window === "undefined" || !convoId) return;
+  try {
+    localStorage.removeItem(`${GREETING_KEY_PREFIX}${convoId}`);
+  } catch { /* noop */ }
+}
