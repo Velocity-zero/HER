@@ -25,10 +25,14 @@ import { buildSystemPrompt } from "./prompts/index";
 /**
  * Context window settings.
  * Tune these to balance quality vs. token cost.
+ *
+ * Step 18.3 (Phase C): recentMessageCount tightened from 40 → 30. Older
+ * messages now flow through buildConversationSummary() instead of being
+ * sent verbatim, which keeps token cost bounded on long-lived accounts.
  */
 export const CONTEXT_CONFIG = {
   /** Max recent messages to include in the rolling window */
-  recentMessageCount: 40,
+  recentMessageCount: 30,
 
   /** Min messages to always keep (even in aggressive trimming) */
   minMessages: 6,
@@ -41,30 +45,53 @@ export const CONTEXT_CONFIG = {
   softCharBudget: 12_000,
 } as const;
 
-// ── Summary Placeholder ────────────────────────────────────
+// ── Summary Builder ────────────────────────────────────────
 
 /**
- * Placeholder for conversation summarization.
+ * Deterministic, no-LLM heuristic summary of older messages.
  *
- * In the future, when a conversation exceeds a threshold,
- * older messages will be summarized into a compact block
- * that preserves emotional context and key facts.
+ * Why heuristic instead of an LLM call:
+ *   - An LLM-driven summary adds 500–1500ms of latency to every chat
+ *     request on long-lived accounts. That's exactly the production
+ *     pain we're trying to eliminate.
+ *   - A bounded heuristic gives the model the *shape* of what happened
+ *     (turn count, who carried the conversation, a peek at the first
+ *     and most recent older turn) without re-summarizing semantics that
+ *     the memory + interaction-signal pipelines already capture.
  *
- * For now this returns null. When implemented, it will:
- *   1. Take messages older than the rolling window
- *   2. Summarize them via an LLM call (or local heuristic)
- *   3. Return a string like:
- *      "Earlier, you talked about their love of rain, a hard day
- *       at work, and a childhood memory about their grandmother.
- *       The mood was warm and reflective."
+ * Output is intentionally compact (~250–500 chars). When `olderMessages`
+ * is small we return null — no summary needed.
  */
 export function buildConversationSummary(
   olderMessages: Message[]
 ): string | null {
-  // TODO: Implement summarization (rolling summary of conversations >50 msgs)
-  // would dramatically reduce token cost on engaged users.
-  void olderMessages;
-  return null;
+  if (olderMessages.length < 4) return null;
+
+  const userTurns = olderMessages.filter((m) => m.role === "user").length;
+  const herTurns = olderMessages.filter((m) => m.role === "assistant").length;
+
+  // Anchor turns the model can latch onto: the first thing that started
+  // the older window, and the most recent thing that fell out of it.
+  const firstUserTurn = olderMessages.find((m) => m.role === "user");
+  const lastTurn = olderMessages[olderMessages.length - 1];
+
+  const trim = (s: string, max = 140): string => {
+    const flat = s.replace(/\s+/g, " ").trim();
+    return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
+  };
+
+  const lines: string[] = [
+    `${olderMessages.length} earlier turns (${userTurns} from them, ${herTurns} from you).`,
+  ];
+  if (firstUserTurn) {
+    lines.push(`it started with them saying: "${trim(firstUserTurn.content)}"`);
+  }
+  if (lastTurn && lastTurn !== firstUserTurn) {
+    const who = lastTurn.role === "user" ? "they" : "you";
+    lines.push(`most recently ${who} said: "${trim(lastTurn.content)}"`);
+  }
+  lines.push("the live messages below pick up from there.");
+  return lines.join(" ");
 }
 
 // ── Context Builder ────────────────────────────────────────

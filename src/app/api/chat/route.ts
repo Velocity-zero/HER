@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ChatRequest, ChatResponse } from "@/lib/types";
+import { ChatRequest, ChatResponse, ModelMessage } from "@/lib/types";
 import { buildPayload } from "@/lib/conversation";
 import { generateReply, generateStreamReply } from "@/lib/provider";
 import { validateApiRequest, checkBodySize, MAX_MESSAGES_COUNT, MAX_MESSAGE_LENGTH } from "@/lib/api-auth";
@@ -8,6 +8,7 @@ import { createTrace } from "@/lib/trace";
 import { auditContext, reportToLog } from "@/lib/context-budget";
 import { auditContextPayloads } from "@/lib/recursive-context-detector";
 import { classifyFailure } from "@/lib/failure-classify";
+import { applyLoadShedding } from "@/lib/load-shedding";
 
 /**
  * POST /api/chat
@@ -148,8 +149,42 @@ export async function POST(req: NextRequest) {
       ...reportToLog(audit),
     });
 
+    // ── Step 18.3 (Phase C): Cognitive Load Shedding ──
+    // When the assembled prompt exceeds the total token ceiling, trim
+    // optional layers (signals → self → emotion → memory → continuity)
+    // and rebuild the payload before calling the LLM. We rebuild instead
+    // of editing in place so the system prompt stays internally consistent.
+    let finalPayload: ModelMessage[] = payload;
+    if (audit.overTotalBudget) {
+      const shed = applyLoadShedding({
+        systemPrompt: systemPromptText,
+        historyText,
+        memoryContext: body.memoryContext,
+        continuityContext: body.continuityContext,
+      });
+      console.warn("[HER LoadShedding]", {
+        traceId: trace.traceId,
+        actions: shed.report.actionsApplied,
+        before: shed.report.beforeTokens,
+        after: shed.report.afterTokens,
+        stillOver: shed.report.stillOverBudget,
+      });
+      // Rebuild payload with the trimmed context blocks.
+      finalPayload = buildPayload(body.messages, {
+        mode: body.mode || "default",
+        continuityContext: shed.continuityContext ?? undefined,
+        rapportLevel: body.rapportLevel,
+        memoryContext: shed.memoryContext ?? undefined,
+        // Don't re-inject the response/anti-rep instructions when we're
+        // already over budget — they're carried inside continuityContext.
+        responseModeInstruction: undefined,
+        antiRepetitionInstruction: undefined,
+        userTimezone: body.userTimezone,
+      });
+    }
+
     debug(
-      `[HER API] ${body.messages.length} msgs → ${payload.length} payload (stream: ${wantsStream})`
+      `[HER API] ${body.messages.length} msgs → ${finalPayload.length} payload (stream: ${wantsStream})`
     );
 
     // ── Streaming path ──
@@ -160,7 +195,7 @@ export async function POST(req: NextRequest) {
           const encoder = new TextEncoder();
           let chunksEmitted = 0;
           try {
-            for await (const chunk of generateStreamReply(payload)) {
+            for await (const chunk of generateStreamReply(finalPayload)) {
               controller.enqueue(encoder.encode(chunk));
               chunksEmitted++;
             }
@@ -199,8 +234,33 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Non-streaming path (backward compatible) ──
+    // Step 18.3: provider failsafe — on a *retryable* failure (timeout,
+    // generic provider 5xx) we retry ONCE with a lightweight payload
+    // (system prompt + recent messages only — no enriched context). This
+    // covers the intermittent "oops something broke" on old accounts.
     trace.stage("llm_request_start");
-    const reply = await generateReply(payload);
+    let reply: string;
+    try {
+      reply = await generateReply(finalPayload);
+    } catch (err) {
+      const cls = classifyFailure(err);
+      const retryable = cls.code === "HER_TIMEOUT" || cls.code === "HER_PROVIDER_ERROR";
+      if (!retryable) {
+        throw err;
+      }
+      console.warn("[HER Fallback] primary failed — retrying lightweight", {
+        traceId: trace.traceId,
+        code: cls.code,
+      });
+      trace.stage("llm_retry_lightweight", { code: cls.code });
+      // Lightweight payload: rebuild WITHOUT any optional context blocks.
+      const lightweight = buildPayload(body.messages, {
+        mode: body.mode || "default",
+        rapportLevel: body.rapportLevel,
+        userTimezone: body.userTimezone,
+      });
+      reply = await generateReply(lightweight);
+    }
     trace.stage("llm_request_end", { replyChars: reply.length });
     trace.end({ outcome: "ok", replyChars: reply.length });
 

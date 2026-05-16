@@ -14,9 +14,15 @@ import { validateApiRequest } from "@/lib/api-auth";
 import {
   getRecentInteractionSignals,
   formatSignalsForPrompt,
+  type StoredInteractionSignal,
 } from "@/lib/interaction-signals";
-import { loadSelfState } from "@/lib/self-state-store";
-import { decaySyntheticSelfState, buildSelfStateBrief } from "@/lib/self-model";
+import { loadSelfState, type LoadedSelfState } from "@/lib/self-state-store";
+import {
+  decaySyntheticSelfState,
+  buildSelfStateBrief,
+  NEUTRAL_STATE,
+} from "@/lib/self-model";
+import { withTimeout } from "@/lib/with-timeout";
 
 export async function GET(req: NextRequest) {
   try {
@@ -37,11 +43,19 @@ export async function GET(req: NextRequest) {
 
     const limit = limitParam ? Math.max(1, Math.min(20, parseInt(limitParam, 10) || 6)) : 6;
 
-    const signals = await getRecentInteractionSignals({
-      userId,
-      conversationId: conversationId || null,
-      limit,
-    });
+    // ── Step 18.3 (Phase C): bounded DB reads ──
+    // On engaged accounts both signals + self-state fetches occasionally
+    // stall under Supabase load. We never let them block the chat
+    // pipeline — withTimeout returns a safe empty value and logs which
+    // subsystem stalled so we can spot it in traces.
+    const signals = await withTimeout<StoredInteractionSignal[]>(
+      getRecentInteractionSignals({
+        userId,
+        conversationId: conversationId || null,
+        limit,
+      }),
+      { label: "interaction-signals.get", ms: 1200, fallback: [] },
+    );
 
     const signalsBlock = formatSignalsForPrompt(signals);
 
@@ -50,10 +64,17 @@ export async function GET(req: NextRequest) {
     // nothing distinctive is going on, so we never inject filler.
     let selfBlock: string | null = null;
     try {
-      const { state, lastUpdated } = await loadSelfState(userId);
-      const decayed = lastUpdated
-        ? decaySyntheticSelfState(state, lastUpdated)
-        : state;
+      const selfResult = await withTimeout<LoadedSelfState>(
+        loadSelfState(userId),
+        {
+          label: "self-state.load",
+          ms: 1200,
+          fallback: { state: { ...NEUTRAL_STATE }, lastUpdated: null },
+        },
+      );
+      const decayed = selfResult.lastUpdated
+        ? decaySyntheticSelfState(selfResult.state, selfResult.lastUpdated)
+        : selfResult.state;
       selfBlock = buildSelfStateBrief(decayed);
     } catch {
       // Self-state is non-essential — silent fallback.
