@@ -79,13 +79,15 @@ export async function GET(req: NextRequest) {
     events.length,
     events.map((e) => ({ id: e.id, user: e.user_id, type: e.type, trigger_at: e.trigger_at }))
   );
-  if (events.length === 0) {
-    return NextResponse.json({ processed: 0 });
-  }
 
   let processed = 0;
   let delayed = 0;
 
+  // NOTE: do NOT early-return when events.length === 0. The missed-pass below
+  // independently scans for already-sent events that need a soft follow-up,
+  // and bailing here was silently disabling follow-ups on every cron tick that
+  // didn't also have a brand-new event due. Just skip the main loop instead.
+  if (events.length > 0) {
   for (const event of events) {
     try {
       // ── Step 17.X+2: Active Conversation Suppression ──
@@ -227,6 +229,7 @@ export async function GET(req: NextRequest) {
       errorHER("Cron", event.id, "processing error", { err: err instanceof Error ? err.message : String(err) });
     }
   }
+  } // end: if (events.length > 0)
 
   // ── Step 17.4 + 17.5: Missed-Reminder Pass ────────────────────
   // For each candidate, decide a *dynamic* threshold based on emotion + the
