@@ -21,7 +21,7 @@ import { getSupabaseClient } from "@/lib/supabase-client";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const TEST_USER = "test-user";
+const TEST_USER = "00000000-0000-0000-0000-0000deadbeef";
 const TEST_CONVO = "00000000-0000-0000-0000-00000000beef"; // fixed UUID for repeatable cleanup
 
 function notFound() {
@@ -75,6 +75,26 @@ async function actionCreate(params: URLSearchParams) {
   const conversationId = params.get("conversationId") ?? TEST_CONVO;
 
   const triggerAt = new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+
+  // Ensure the fixed test conversation exists — scheduled_events has a FK to
+  // conversations(id), so without this row the insert fails with PG 23503.
+  const seedClient = getSupabaseClient();
+  if (seedClient) {
+    const { error: convoErr } = await seedClient
+      .from("conversations")
+      .upsert(
+        {
+          id: conversationId,
+          user_id: userId,
+          title: "[dev-test] pipeline harness",
+          last_message_at: new Date().toISOString(),
+        },
+        { onConflict: "id" }
+      );
+    if (convoErr) {
+      console.warn("[HER DevTest] seed conversation failed:", convoErr.message);
+    }
+  }
 
   const eventId = await createScheduledEvent({
     userId,

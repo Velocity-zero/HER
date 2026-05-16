@@ -23,7 +23,7 @@
 const BASE = process.env.HER_BASE_URL || "http://localhost:3000";
 const DEV_SECRET = process.env.DEV_TEST_SECRET || "her-dev";
 const CRON_SECRET = process.env.CRON_SECRET || "";
-const USER_ID = "test-user";
+const USER_ID = "00000000-0000-0000-0000-0000deadbeef";
 
 const c = {
   reset: "\x1b[0m", dim: "\x1b[2m", bold: "\x1b[1m",
@@ -90,20 +90,30 @@ async function sleep(ms) {
       followup_sent_at: status.event?.followup_sent_at,
     });
 
-    // ── Step 4: fast-forward into the past so missed-pass triggers
-    log("4. Shift event 40 min into the past");
-    const shifted = await dev("shift", `&eventId=${eventId}&minutes=40`);
-    ok(`trigger_at=${shifted.trigger_at}  sent_at=${shifted.sent_at ?? "(none)"}`);
+    // The main cron tick also runs the missed-pass internally. If it picked
+    // up our just-sent event (rare — only if it crossed the dynamic threshold
+    // immediately) the follow-up is already done and steps 4/5 have nothing
+    // to do. Skip them in that case so the assertion at the end is honest.
+    const followupAlreadyDone = !!status.event?.followup_sent_at;
 
-    // ── Step 5: second cron pass — missed follow-up
-    log("5. Trigger cron (missed pass) — expect soft follow-up");
-    const cron2 = await fireCron();
-    log("   cron result", cron2);
-    if (cron2.followups >= 1) ok(`Missed pass sent ${cron2.followups} follow-up(s)`);
-    else warn("No follow-up sent — likely no push subscription, fatigue gate, or already followed up");
+    if (followupAlreadyDone) {
+      ok("Follow-up was already delivered during the main tick — skipping shift/replay");
+    } else {
+      // ── Step 4: fast-forward into the past so missed-pass triggers
+      log("4. Shift event 40 min into the past");
+      const shifted = await dev("shift", `&eventId=${eventId}&minutes=40`);
+      ok(`trigger_at=${shifted.trigger_at}  sent_at=${shifted.sent_at ?? "(none)"}`);
 
-    await sleep(250);
-    status = await dev("status", `&eventId=${eventId}`);
+      // ── Step 5: second cron pass — missed follow-up
+      log("5. Trigger cron (missed pass) — expect soft follow-up");
+      const cron2 = await fireCron();
+      log("   cron result", cron2);
+      if (cron2.followups >= 1) ok(`Missed pass sent ${cron2.followups} follow-up(s)`);
+      else warn("No follow-up sent — likely no push subscription, fatigue gate, or already followed up");
+
+      await sleep(250);
+      status = await dev("status", `&eventId=${eventId}`);
+    }
 
     // ── Step 6: final report
     console.log(`\n${c.bold}Final event state${c.reset}`);

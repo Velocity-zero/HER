@@ -33,6 +33,7 @@ ALTER TABLE user_memories ENABLE ROW LEVEL SECURITY;
 
 -- Policy: users can read/write their own memories
 -- (matches the pattern used by conversations and messages tables)
+DROP POLICY IF EXISTS "Users can manage their own memories" ON user_memories;
 CREATE POLICY "Users can manage their own memories"
   ON user_memories
   FOR ALL

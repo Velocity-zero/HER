@@ -1,5 +1,33 @@
 # HER — Scheduled Reminder Pipeline: Failure Analysis
 
+> ## ✅ STATUS: RESOLVED — kept as a postmortem
+>
+> All 🔴 root causes are fixed in code, the matching schema migrations are
+> applied (`supabase-promise-type.sql`, `supabase-step-17-4.sql`,
+> `supabase-step-18.sql`, `supabase-memory-table.sql`,
+> `supabase-interaction-signals.sql`, `supabase-reply-columns.sql`), and the
+> end-to-end pipeline has been verified green via `node scripts/test-pipeline.mjs`
+> (full lifecycle: `pending → sent → missed → followup`).
+>
+> **Fixes shipped:**
+> - **#1 Quiet-hours TZ bug** — `notification-settings.ts` short-circuits
+>   `isQuietHours()` when timezone is the placeholder `"UTC"`, and
+>   `api/temporal/route.ts` persists the browser-detected TZ on first contact.
+> - **#2 Missing `'promise'` in CHECK** — schema migration
+>   `supabase-promise-type.sql` applied.
+> - **#3/#4 Variance** — `applyTimingVariance` keeps `promise` events at
+>   ~0 offset (10–50 s jitter only), so explicit wall-clock asks land on time.
+> - **#5 User-chosen reminders bypass quiet hours/cooldown** — implemented
+>   via `isHighPriorityEvent()` in the cron route.
+> - **Bonus:** discovered & fixed an additional silent bug — the cron route
+>   used to early-return when `events.length === 0`, which silently disabled
+>   the missed-event follow-up pass on every tick that didn't also have a
+>   brand-new event due. Now the missed-pass always runs.
+>
+> Original failure analysis preserved below for context.
+
+---
+
 **Scenario:** User sends *"remind me at 9:45am to book a train ticket"*. Assistant acknowledges in chat, but no reminder message is inserted and no push notification fires.
 
 **Scope:** Trace grounded in the actual code in this repo:

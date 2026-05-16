@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_interaction_signals_conversation
 -- Row level security
 ALTER TABLE interaction_signals ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can manage their own interaction signals" ON interaction_signals;
 CREATE POLICY "Users can manage their own interaction signals"
   ON interaction_signals
   FOR ALL
