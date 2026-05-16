@@ -192,9 +192,9 @@ function extractOpening(text: string): string {
  * No mutation — returns a new object every time.
  */
 export function buildContinuity(messages: Message[]): ConversationContinuity {
-  // Filter to actual conversation messages (skip greeting placeholder)
+  // Filter to actual conversation messages (skip greeting placeholder and deleted messages)
   const convo = messages.filter(
-    (m) => m.id !== "greeting" && m.content !== "(shared a photo)" && !m.imageLoading
+    (m) => m.id !== "greeting" && m.content !== "(shared a photo)" && !m.imageLoading && !m.is_deleted
   );
 
   const userMessages = convo.filter((m) => m.role === "user");

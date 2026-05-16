@@ -1,6 +1,6 @@
 import { Message } from "@/lib/types";
 import { isTouchDevice } from "@/lib/utils";
-import { memo, useState, useRef, useCallback, type TouchEvent as ReactTouchEvent } from "react";
+import { memo, useState, useRef, useCallback, useEffect, type TouchEvent as ReactTouchEvent } from "react";
 
 /**
  * MessageBubble — A single message in the conversation.
@@ -11,6 +11,18 @@ import { memo, useState, useRef, useCallback, type TouchEvent as ReactTouchEvent
  * Reply gesture:
  *  • Mobile — swipe right on any message (WhatsApp-style)
  *  • Desktop — hover to reveal a "reply" button below the bubble
+ *
+ * Edit / Delete gesture (user messages only):
+ *  • Mobile — long-press → unified action sheet (React | Copy | Edit | Delete)
+ *  • Desktop — hover → inline action bar below bubble
+ *
+ * The emoji tray for reactions remains exactly as before; on mobile it is
+ * reached via "React" in the action sheet rather than directly from long-press.
+ * This keeps the gesture surface conflict-free:
+ *   tap           → normal interaction
+ *   swipe right   → reply (unchanged)
+ *   long-press    → action sheet
+ *   reaction tap  → instant toggle (from pill or from emoji tray)
  */
 
 /** Swipe threshold in px — past this triggers reply */
@@ -37,6 +49,10 @@ interface MessageBubbleProps {
   onReply?: (message: Message) => void;
   /** Called when user reacts to a message with an emoji */
   onReaction?: (messageId: string, emoji: string, reactor: "user" | "her") => void;
+  /** Called when user edits their own message — only applies to role="user" */
+  onEdit?: (messageId: string, newContent: string) => void;
+  /** Called when user soft-deletes their own message — only applies to role="user" */
+  onDelete?: (messageId: string) => void;
 }
 
 /** Truncate text for quote preview */
@@ -51,8 +67,9 @@ const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🔥", "👏"];
 /** Long-press duration in ms to trigger emoji tray on mobile */
 const LONG_PRESS_MS = 400;
 
-function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStreaming = false, imageActions, thinkingLabel, onReply, onReaction }: MessageBubbleProps) {
+function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStreaming = false, imageActions, thinkingLabel, onReply, onReaction, onEdit, onDelete }: MessageBubbleProps) {
   const isUser = message.role === "user";
+  const isDeleted = !!message.is_deleted;
   const hasImage = !!message.image;
   const hasText = message.content.length > 0 && message.content !== "(shared a photo)";
   const isShort = !hasImage && message.content.length <= 40;
@@ -63,16 +80,32 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
   const isGeneratedImage = hasImage && !isUser;
   const showActions = isGeneratedImage && !isImageLoading && imageActions;
   const hasReplyTo = !!message.replyTo;
-  const canReply = !!onReply && !isStreaming && !isThinkingState && !isImageLoading;
-  const canReact = !!onReaction && !isStreaming && !isThinkingState && !isImageLoading;
+  const canReply = !!onReply && !isStreaming && !isThinkingState && !isImageLoading && !isDeleted;
+  const canReact = !!onReaction && !isStreaming && !isThinkingState && !isImageLoading && !isDeleted;
+  const canEdit = isUser && !isStreaming && !isDeleted && !!onEdit;
+  const canDelete = isUser && !isStreaming && !isDeleted && !!onDelete;
 
   const [copied, setCopied] = useState(false);
   const [showReplyBtn, setShowReplyBtn] = useState(false);
   const [showEmojiTray, setShowEmojiTray] = useState(false);
+  // Desktop hover action bar for user messages (replaces direct emoji-tray on hover)
+  const [showActionBar, setShowActionBar] = useState(false);
+  // Mobile long-press unified action sheet
+  const [showActionSheet, setShowActionSheet] = useState(false);
+  // Inline edit state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emojiHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
+
+  // Sync edit content when message content changes externally (e.g. after optimistic update)
+  useEffect(() => {
+    if (!isEditing) setEditContent(message.content);
+  }, [message.content, isEditing]);
 
   // Close emoji tray if streaming starts (prevents ghost tray during rapid state changes)
   if (isStreaming && showEmojiTray) {
@@ -93,26 +126,38 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
     minute: "2-digit",
   });
 
-  /** Show reply button + emoji tray on hover (desktop only), auto-hide after 3s */
+  /** Show hover actions on desktop — action bar for user messages, emoji+reply for HER */
   const revealReply = useCallback(() => {
     if (isTouchDevice()) return;
-    if (canReply) {
-      setShowReplyBtn(true);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(() => setShowReplyBtn(false), 3000);
-    }
-    if (canReact) {
-      setShowEmojiTray(true);
-      if (emojiHideTimer.current) clearTimeout(emojiHideTimer.current);
-      emojiHideTimer.current = setTimeout(() => setShowEmojiTray(false), 3000);
-    }
-  }, [canReply, canReact]);
 
-  /** Hide desktop tray on mouse leave */
+    if (isUser) {
+      // User messages: show the unified action bar (edit / delete / copy / react)
+      setShowActionBar(true);
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      hideTimer.current = setTimeout(() => setShowActionBar(false), 3000);
+    } else {
+      // HER messages: keep the original reply + emoji tray behaviour
+      if (canReply) {
+        setShowReplyBtn(true);
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+        hideTimer.current = setTimeout(() => setShowReplyBtn(false), 3000);
+      }
+      if (canReact) {
+        setShowEmojiTray(true);
+        if (emojiHideTimer.current) clearTimeout(emojiHideTimer.current);
+        emojiHideTimer.current = setTimeout(() => setShowEmojiTray(false), 3000);
+      }
+    }
+  }, [isUser, canReply, canReact]);
+
+  /** Hide desktop actions on mouse leave */
   const hideDesktopActions = useCallback(() => {
     if (isTouchDevice()) return;
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setShowReplyBtn(false), 600);
+    hideTimer.current = setTimeout(() => {
+      setShowReplyBtn(false);
+      setShowActionBar(false);
+    }, 600);
     if (emojiHideTimer.current) clearTimeout(emojiHideTimer.current);
     emojiHideTimer.current = setTimeout(() => setShowEmojiTray(false), 600);
   }, []);
@@ -130,6 +175,33 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
   const openCustomEmoji = useCallback(() => {
     emojiInputRef.current?.focus();
   }, []);
+
+  /** Copy the message text to clipboard */
+  const handleCopyText = useCallback(() => {
+    if (!message.content || message.content === "(shared a photo)") return;
+    navigator.clipboard?.writeText(message.content).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+    if (isTouchDevice() && navigator.vibrate) navigator.vibrate(8);
+  }, [message.content]);
+
+  /** Save an in-progress edit */
+  const handleEditSave = useCallback(() => {
+    const trimmed = editContent.trim();
+    if (!trimmed || trimmed === message.content) {
+      setIsEditing(false);
+      setEditContent(message.content);
+      return;
+    }
+    onEdit?.(message.id, trimmed);
+    setIsEditing(false);
+  }, [editContent, message.content, message.id, onEdit]);
+
+  /** Cancel an in-progress edit */
+  const handleEditCancel = useCallback(() => {
+    setIsEditing(false);
+    setEditContent(message.content);
+  }, [message.content]);
 
   /** Handle custom emoji typed/picked from native keyboard */
   const handleCustomEmojiInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -175,17 +247,18 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
     const target = e.target as HTMLElement;
     const isTextContent = target.closest(".msg-text-selectable") !== null;
 
-    // Start long-press timer for emoji tray (mobile) — but only on non-text areas
-    if (canReact && !isTextContent) {
+    // Long-press → unified action sheet (mobile). Covers all messages — the
+    // sheet content is filtered by canEdit / canDelete / canReact per message.
+    if ((canReact || canEdit || canDelete) && !isTextContent) {
       if (longPressTimer.current) clearTimeout(longPressTimer.current);
       longPressTimer.current = setTimeout(() => {
         longPressFired.current = true;
-        setShowEmojiTray(true);
+        setShowActionSheet(true);
         // Haptic feedback
         if (navigator.vibrate) navigator.vibrate(15);
       }, LONG_PRESS_MS);
     }
-  }, [canReact]);
+  }, [canReact, canEdit, canDelete]);
 
   const handleTouchMove = useCallback((e: ReactTouchEvent) => {
     if (!touchStartRef.current) return;
@@ -268,6 +341,24 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
   const replyIconOpacity = Math.min(swipeX / SWIPE_THRESHOLD, 1);
   /** Reply icon scale — grows as you approach threshold */
   const replyIconScale = 0.5 + Math.min(swipeX / SWIPE_THRESHOLD, 1) * 0.5;
+
+  // ── Tombstone — soft-deleted messages ──────────────────────
+  if (isDeleted) {
+    return (
+      <div
+        id={`msg-${message.id}`}
+        className={`group/msg relative mb-5 flex flex-col sm:mb-6 ${isUser ? "items-end" : "items-start"}`}
+      >
+        <div className={`rounded-[20px] px-[18px] py-[10px] ${
+          isUser ? "bg-her-user-bubble/20" : "bg-her-ai-bubble/25"
+        } max-w-[75%] sm:max-w-[65%]`}>
+          <span className="text-[12px] italic tracking-[0.02em] text-her-text-muted/28">
+            message deleted
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -411,8 +502,41 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
           </div>
         )}
 
-        {/* Text */}
-        {hasText && !isThinkingState && !isImageLoading && (
+        {/* Text — or inline edit textarea when editing */}
+        {isEditing ? (
+          <div className="flex flex-col gap-2.5">
+            <textarea
+              ref={editTextareaRef}
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { e.preventDefault(); handleEditCancel(); }
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleEditSave(); }
+              }}
+              rows={Math.max(2, editContent.split("\n").length)}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              className="w-full resize-none bg-transparent text-[13.5px] leading-[1.7] tracking-[0.005em] text-her-text outline-none sm:text-[14.5px] sm:leading-[1.75]"
+            />
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleEditCancel}
+                className="text-[11px] text-her-text-muted/40 transition-colors hover:text-her-text-muted/60"
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEditSave}
+                disabled={!editContent.trim() || editContent.trim() === message.content}
+                className="text-[11px] text-her-accent/70 transition-colors hover:text-her-accent disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                save
+              </button>
+            </div>
+          </div>
+        ) : hasText && !isThinkingState && !isImageLoading ? (
           <div className={`msg-text-selectable text-[13.5px] leading-[1.7] tracking-[0.005em] sm:text-[14.5px] sm:leading-[1.75] ${hasImage ? "px-3.5 pb-3 pt-1.5 sm:px-4" : ""}`}>
             {message.content.split("\n").map((line, i) => (
               <span key={i}>
@@ -422,7 +546,7 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
             ))}
             {isStreaming && <span className="animate-stream-cursor" />}
           </div>
-        )}
+        ) : null}
 
         {/* Image actions — download, copy prompt, reuse, edit source */}
         {showActions && (
@@ -569,14 +693,140 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
         </>
       )}
 
-      {/* Desktop action row — reply button + emoji hint, appears on hover */}
-      {canReply && showReplyBtn && !showEmojiTray && (
+      {/* Mobile action sheet — triggered by long-press, replaces direct emoji tray */}
+      {showActionSheet && (
+        <>
+          <div
+            className="fixed inset-0 z-40 sm:hidden"
+            onClick={() => setShowActionSheet(false)}
+            onTouchEnd={() => setShowActionSheet(false)}
+            aria-hidden="true"
+          />
+          <div
+            role="group"
+            aria-label="Message actions"
+            className={`animate-emoji-tray absolute -top-11 z-50 flex items-center gap-0.5 rounded-full border border-her-border/15 bg-white/95 px-1.5 py-1 shadow-[0_4px_20px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.04)] backdrop-blur-sm dark:bg-her-bg/95 sm:hidden ${
+              isUser ? "right-0" : "left-0"
+            }`}
+          >
+            {/* React */}
+            {canReact && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setShowActionSheet(false); setShowEmojiTray(true); }}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[16px] transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60"
+                aria-label="React"
+              >
+                😊
+              </button>
+            )}
+            {/* Copy */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleCopyText(); setShowActionSheet(false); }}
+              className="flex h-8 min-w-[44px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/50 transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60"
+              aria-label={copied ? "Copied" : "Copy"}
+            >
+              {copied ? "✓" : "copy"}
+            </button>
+            {/* Edit — user messages only */}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowActionSheet(false);
+                  setIsEditing(true);
+                  setEditContent(message.content);
+                }}
+                className="flex h-8 min-w-[44px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/50 transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60"
+                aria-label="Edit"
+              >
+                edit
+              </button>
+            )}
+            {/* Delete — user messages only */}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowActionSheet(false);
+                  onDelete!(message.id);
+                }}
+                className="flex h-8 min-w-[44px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/40 transition-all duration-150 active:scale-[0.85] hover:bg-red-50 hover:text-red-400 dark:hover:bg-red-900/20"
+                aria-label="Delete"
+              >
+                del
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Desktop action bar for user messages — appears on hover, replaces emoji-tray-on-hover */}
+      {isUser && showActionBar && !isEditing && (
+        <div className={`animate-fade-in mt-1 hidden items-center gap-0.5 sm:flex self-end mr-1`}>
+          {/* React */}
+          {canReact && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowActionBar(false); setShowEmojiTray(true); }}
+              className="flex h-7 w-7 items-center justify-center rounded-full text-[14px] text-her-text-muted/30 transition-all duration-150 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.85]"
+              aria-label="React"
+            >
+              😊
+            </button>
+          )}
+          {/* Copy */}
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleCopyText(); }}
+            className="flex h-7 items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/35 transition-all duration-200 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.94]"
+            aria-label={copied ? "Copied" : "Copy text"}
+          >
+            {copied ? "✓ copied" : "copy"}
+          </button>
+          {/* Edit */}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowActionBar(false);
+                setIsEditing(true);
+                setEditContent(message.content);
+              }}
+              className="flex h-7 items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/35 transition-all duration-200 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.94]"
+              aria-label="Edit message"
+            >
+              edit
+            </button>
+          )}
+          {/* Delete */}
+          {canDelete && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowActionBar(false);
+                onDelete!(message.id);
+              }}
+              className="flex h-7 items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/30 transition-all duration-200 hover:bg-red-50 hover:text-red-400 active:scale-[0.94] dark:hover:bg-red-900/20"
+              aria-label="Delete message"
+            >
+              del
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Desktop action row for HER messages — reply button, appears on hover */}
+      {!isUser && canReply && showReplyBtn && !showEmojiTray && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onReply!(message); setShowReplyBtn(false); }}
-          className={`animate-fade-in mt-1 hidden items-center gap-1 rounded-full px-2.5 py-1 text-[10px] tracking-[0.03em] text-her-text-muted/35 transition-all duration-200 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.94] sm:flex ${
-            isUser ? "self-end mr-1" : "self-start ml-1"
-          }`}
+          className={`animate-fade-in mt-1 hidden items-center gap-1 rounded-full px-2.5 py-1 text-[10px] tracking-[0.03em] text-her-text-muted/35 transition-all duration-200 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.94] sm:flex self-start ml-1`}
           aria-label="Reply to this message"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 -scale-x-100">
@@ -586,13 +836,20 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
         </button>
       )}
 
-      {/* Timestamp — only show for real timestamps (not the initial greeting) */}
-      {showTimestamp && message.timestamp > 0 && (
-        <span className={`mt-1.5 text-[10px] tracking-wide text-her-text-muted/30 ${
-          isUser ? "mr-1.5" : "ml-1.5"
-        }`}>
-          {time}
-        </span>
+      {/* Edited indicator + Timestamp */}
+      {(message.edited_at || (showTimestamp && message.timestamp > 0)) && (
+        <div className={`mt-1.5 flex items-center gap-1.5 ${isUser ? "mr-1.5 justify-end" : "ml-1.5 justify-start"}`}>
+          {message.edited_at && !isEditing && (
+            <span className="text-[9px] tracking-[0.04em] text-her-text-muted/22">
+              edited
+            </span>
+          )}
+          {showTimestamp && message.timestamp > 0 && (
+            <span className="text-[10px] tracking-wide text-her-text-muted/30">
+              {time}
+            </span>
+          )}
+        </div>
       )}
       </div>{/* end swipeable wrapper */}
     </div>

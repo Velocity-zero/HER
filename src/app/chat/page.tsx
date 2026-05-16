@@ -35,6 +35,8 @@ import {
   updateConversationTitle,
   deleteConversation,
   getUserRapportStats,
+  editMessage as editMessageInDB,
+  softDeleteMessage as softDeleteMessageInDB,
   type ConversationSummary,
   type DbMessage,
 } from "@/lib/supabase-persistence";
@@ -103,6 +105,8 @@ function dbMessageToUiMessage(dbMsg: DbMessage): Message {
       ? { replyTo: { id: dbMsg.reply_to_id, content: dbMsg.reply_to_content, role: dbMsg.reply_to_role } }
       : {}),
     ...(cleanReactions ? { reactions: cleanReactions } : {}),
+    ...(dbMsg.edited_at ? { edited_at: dbMsg.edited_at } : {}),
+    ...(dbMsg.is_deleted ? { is_deleted: true } : {}),
   };
 }
 
@@ -1167,7 +1171,10 @@ export default function ChatPage() {
 
     // ── Inject reply context into messages for the LLM ──
     // If the latest user message is a reply, prepend the quoted text so HER knows the context.
-    const apiMessages = updatedMessages.map((m) => {
+    // Deleted messages are excluded so soft-deleted content never enters future prompts.
+    const apiMessages = updatedMessages
+      .filter((m) => !m.is_deleted)
+      .map((m) => {
       // Strip any legacy reaction annotations from message content
       const cleanContent = m.content.replace(/\s*\[user reacted to this: [^\]]*\]/g, "");
       const cleaned = { ...m, content: cleanContent };
@@ -1530,7 +1537,68 @@ export default function ChatPage() {
   // Keep the ref in sync so module-level helpers can call it
   handleReactionRef.current = handleReaction;
 
-  // ── Friendly error mapper for Image Studio ──
+  // ── Edit a user message ──
+  const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
+    const msg = messagesRef.current.find((m) => m.id === messageId);
+    if (!msg || msg.role !== "user" || msg.is_deleted) return;
+
+    const previousContent = msg.content;
+    const previousEditedAt = msg.edited_at;
+
+    // Optimistic update
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? { ...m, content: newContent, edited_at: new Date().toISOString() }
+          : m
+      )
+    );
+
+    const userId = await getEffectiveUserId();
+    const result = await editMessageInDB(messageId, userId, newContent);
+
+    if (!result.ok) {
+      console.warn(`[HER Message] EDIT REJECTED — id=${messageId} reason=${result.reason}`);
+      // Roll back optimistic update
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, content: previousContent, edited_at: previousEditedAt }
+            : m
+        )
+      );
+    } else {
+      console.log(`[HER Message] EDITED — id=${messageId} prevLen=${previousContent.length} newLen=${newContent.length}`);
+    }
+  }, []);
+
+  // ── Soft-delete a user message ──
+  const handleDeleteMessage = useCallback(async (messageId: string) => {
+    const msg = messagesRef.current.find((m) => m.id === messageId);
+    if (!msg || msg.role !== "user" || msg.is_deleted) return;
+
+    // Optimistic: show tombstone immediately
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId ? { ...m, is_deleted: true } : m
+      )
+    );
+
+    const userId = await getEffectiveUserId();
+    const result = await softDeleteMessageInDB(messageId, userId);
+
+    if (!result.ok) {
+      console.warn(`[HER Message] DELETE REJECTED — id=${messageId} reason=${result.reason}`);
+      // Roll back
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, is_deleted: false } : m
+        )
+      );
+    } else {
+      console.log(`[HER Message] DELETED — id=${messageId}`);
+    }
+  }, []);
   function mapStudioError(raw: string): string {
     const lower = raw.toLowerCase();
     if (lower.includes("api key") || lower.includes("envkey") || lower.includes("configure") || lower.includes("missing") || lower.includes("unauthorized")) {
@@ -1931,6 +1999,8 @@ export default function ChatPage() {
               thinkingLabel={surfaceCopy.thinkingLabel}
               onReply={handleReply}
               onReaction={handleReaction}
+              onEdit={handleEditMessage}
+              onDelete={handleDeleteMessage}
             />
           );
         }}

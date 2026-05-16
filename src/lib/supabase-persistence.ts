@@ -310,6 +310,10 @@ export interface DbMessage {
   reply_to_role: "user" | "assistant" | null;
   /** Emoji reactions as JSONB (nullable) */
   reactions: Record<string, string[]> | null;
+  /** ISO timestamp of the last user edit (null = never edited) */
+  edited_at: string | null;
+  /** True when the message has been soft-deleted */
+  is_deleted: boolean | null;
 }
 
 /**
@@ -338,7 +342,7 @@ export async function getConversationMessages(
     // This is much faster than fetching all + slicing on the client.
     const { data, error } = await client
       .from("messages")
-      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions")
+      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(limit);
@@ -374,7 +378,7 @@ export async function getOlderMessages(
   try {
     const { data, error } = await client
       .from("messages")
-      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions")
+      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted")
       .eq("conversation_id", conversationId)
       .lt("created_at", beforeIso)
       .order("created_at", { ascending: false })
@@ -557,4 +561,97 @@ export async function initPersistence(): Promise<void> {
 
   const userId = await getEffectiveUserId();
   await ensureProfile(userId);
+}
+
+// ── Message Edit / Delete ──────────────────────────────────
+
+/**
+ * Edit a user message's content in Supabase.
+ *
+ * Looks up the row by UUID (id) OR by client_message_id so it works
+ * for both DB-loaded messages and freshly-sent optimistic ones.
+ *
+ * Returns { ok: true } on success, { ok: false, reason } on any failure.
+ * Callers should roll back the optimistic UI on failure.
+ */
+export async function editMessage(
+  messageId: string,
+  userId: string,
+  newContent: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { ok: false, reason: "supabase not configured" };
+
+  try {
+    // Verify ownership + role before mutating.
+    // Accept both the DB UUID and the client_message_id so the caller
+    // doesn't need to track which kind of id it has.
+    const { data: row, error: lookupErr } = await client
+      .from("messages")
+      .select("id, user_id, role, is_deleted, conversation_id")
+      .or(`id.eq.${messageId},client_message_id.eq.${messageId}`)
+      .maybeSingle();
+
+    if (lookupErr) return { ok: false, reason: lookupErr.message };
+    if (!row) return { ok: false, reason: "not found" };
+    if (row.user_id !== userId) return { ok: false, reason: "not owner" };
+    if (row.role !== "user") return { ok: false, reason: "not a user message" };
+    if (row.is_deleted) return { ok: false, reason: "already deleted" };
+    if (!newContent.trim()) return { ok: false, reason: "empty content" };
+
+    const { error: updateErr } = await client
+      .from("messages")
+      .update({
+        content: newContent,
+        edited_at: new Date().toISOString(),
+      })
+      .eq("id", row.id);
+
+    if (updateErr) return { ok: false, reason: updateErr.message };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Soft-delete a user message.
+ *
+ * Sets is_deleted = true, deleted_at = now. The DB row is kept so reactions,
+ * reply anchors, and conversation structure stay intact. The UI shows a
+ * tombstone in place of the message and future prompts exclude it.
+ */
+export async function softDeleteMessage(
+  messageId: string,
+  userId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const client = getSupabaseClient();
+  if (!client) return { ok: false, reason: "supabase not configured" };
+
+  try {
+    const { data: row, error: lookupErr } = await client
+      .from("messages")
+      .select("id, user_id, role, is_deleted")
+      .or(`id.eq.${messageId},client_message_id.eq.${messageId}`)
+      .maybeSingle();
+
+    if (lookupErr) return { ok: false, reason: lookupErr.message };
+    if (!row) return { ok: false, reason: "not found" };
+    if (row.user_id !== userId) return { ok: false, reason: "not owner" };
+    if (row.role !== "user") return { ok: false, reason: "not a user message" };
+    if (row.is_deleted) return { ok: true }; // idempotent
+
+    const { error: deleteErr } = await client
+      .from("messages")
+      .update({
+        is_deleted: true,
+        deleted_at: new Date().toISOString(),
+      })
+      .eq("id", row.id);
+
+    if (deleteErr) return { ok: false, reason: deleteErr.message };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
 }
