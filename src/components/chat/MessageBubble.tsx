@@ -1,6 +1,6 @@
 import { Message } from "@/lib/types";
 import { isTouchDevice } from "@/lib/utils";
-import { memo, useState, useRef, useCallback, useEffect, type TouchEvent as ReactTouchEvent } from "react";
+import { memo, useState, useRef, useCallback, type TouchEvent as ReactTouchEvent } from "react";
 
 /**
  * MessageBubble — A single message in the conversation.
@@ -101,11 +101,6 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
   const emojiHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFired = useRef(false);
-
-  // Sync edit content when message content changes externally (e.g. after optimistic update)
-  useEffect(() => {
-    if (!isEditing) setEditContent(message.content);
-  }, [message.content, isEditing]);
 
   // Close emoji tray if streaming starts (prevents ghost tray during rapid state changes)
   if (isStreaming && showEmojiTray) {
@@ -514,7 +509,6 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
                 if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleEditSave(); }
               }}
               rows={Math.max(2, editContent.split("\n").length)}
-              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               className="w-full resize-none bg-transparent text-[13.5px] leading-[1.7] tracking-[0.005em] text-her-text outline-none sm:text-[14.5px] sm:leading-[1.75]"
             />
