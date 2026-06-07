@@ -1,5 +1,5 @@
 /**
- * HER — AI Provider (NVIDIA NIM / Mistral Large 3)
+ * HER — AI Provider (NVIDIA NIM / Llama 3.3 Nemotron Super 49B)
  *
  * This file isolates all LLM provider logic. The API route calls
  * a single function: generateReply(). The provider handles the rest.
@@ -15,7 +15,7 @@ import { ModelMessage } from "./types";
 export const NVIDIA_CHAT_URL =
   "https://integrate.api.nvidia.com/v1/chat/completions";
 export const NVIDIA_CHAT_MODEL =
-  "mistralai/mistral-large-3-675b-instruct-2512";
+  "nvidia/llama-3.3-nemotron-super-49b-v1.5";
 
 /** Convert ModelMessage[] to OpenAI-compatible messages for NVIDIA */
 function toNvidiaMessages(
@@ -50,10 +50,10 @@ async function nvidiaProvider(messages: ModelMessage[]): Promise<string> {
       model: NVIDIA_CHAT_MODEL,
       messages: toNvidiaMessages(messages),
       max_tokens: 512,
-      temperature: 0.75,
-      top_p: 0.9,
-      frequency_penalty: 0.3,
-      presence_penalty: 0.15,
+      temperature: 0.7,
+      top_p: 0.95,
+      frequency_penalty: 0.15,
+      presence_penalty: 0,
       stream: false,
     }),
     signal: AbortSignal.timeout(30_000),
@@ -91,10 +91,10 @@ async function* nvidiaStreamProvider(
       model: NVIDIA_CHAT_MODEL,
       messages: toNvidiaMessages(messages),
       max_tokens: 512,
-      temperature: 0.75,
-      top_p: 0.9,
-      frequency_penalty: 0.3,
-      presence_penalty: 0.15,
+      temperature: 0.7,
+      top_p: 0.95,
+      frequency_penalty: 0.15,
+      presence_penalty: 0,
       stream: true,
     }),
     signal: AbortSignal.timeout(30_000),
