@@ -14,7 +14,7 @@ import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
  *
  * Two-step multimodal pipeline:
  *   1. Gemma 3 27B analyzes the image → raw technical description
- *   2. Mistral Large 3 rewrites the analysis in HER's warm voice
+ *   2. Qwen3-Next-80B-A3B-Instruct rewrites the analysis in HER's warm voice
  *
  * Accepts { image: "data:image/...;base64,...", prompt?: string }
  * Returns  { message: string }  ← always HER-toned, never raw CV output
@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: emptyMsg }, { status: 502 });
     }
 
-    // ── Step 2: Rewrite raw analysis in HER's voice via Mistral ──
+    // ── Step 2: Rewrite raw analysis in HER's voice via Qwen3-Next-80B ──
     debug(
       `[HER Vision] Raw analysis (${rawAnalysis.length} chars) → rewriting`
     );

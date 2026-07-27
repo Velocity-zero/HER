@@ -4,15 +4,15 @@
  * Shared utilities for intelligent pipelines:
  *
  *  1. Vision refinement:
- *     Raw Gemma vision analysis → Mistral rewrites in HER's voice
+ *     Raw Gemma vision analysis → Qwen3-Next-80B rewrites in HER's voice
  *
  *  2. Image prompt enhancement:
- *     Short user prompt → Mistral enriches it → SD3 generates
+ *     Short user prompt → Qwen3-Next-80B enriches it → SD3 generates
  *
  *  3. Dynamic microcopy generation:
  *     Transient HER-style placeholder lines for thinking/waiting states
  *
- * All pipelines call the same NVIDIA NIM chat endpoint (Mistral Large 3)
+ * All pipelines call the same NVIDIA NIM chat endpoint (Qwen3-Next-80B-A3B-Instruct)
  * using NVIDIA_CHAT_API_KEY, isolated from the vision and image-gen keys.
  */
 
@@ -21,7 +21,7 @@ import { NVIDIA_CHAT_URL, NVIDIA_CHAT_MODEL } from "./provider";
 // ── NVIDIA Chat Helper (server-side only) ──────────────────
 
 /**
- * Minimal non-streaming call to Mistral Large 3.
+ * Minimal non-streaming call to Qwen3-Next-80B-A3B-Instruct.
  * Used for server-side orchestration steps that don't need streaming.
  * Throws on any API error so callers can handle gracefully.
  */
@@ -45,7 +45,9 @@ export async function nvidiaChat(
       messages,
       max_tokens: options.maxTokens ?? 1024,
       temperature: options.temperature ?? 0.7,
-      top_p: options.topP ?? 0.95,
+      top_p: options.topP ?? 0.9,
+      frequency_penalty: 0,
+      presence_penalty: 0,
       stream: false,
     }),
   });
@@ -153,7 +155,7 @@ const EMERGENCY_VISION_FALLBACKS = [
 
 /**
  * Returns a last-resort emergency fallback for subjective vision questions.
- * Only called when both Mistral rewrite AND dynamic fallback generation fail.
+ * Only called when both Qwen3-Next-80B rewrite AND dynamic fallback generation fail.
  */
 export function getSubjectiveVisionFallback(): string {
   return EMERGENCY_VISION_FALLBACKS[
@@ -162,7 +164,7 @@ export function getSubjectiveVisionFallback(): string {
 }
 
 /**
- * Generate a dynamic, context-aware subjective vision fallback using Mistral.
+ * Generate a dynamic, context-aware subjective vision fallback using Qwen3-Next-80B.
  * 
  * This creates a warm, HER-style response to a subjective image question
  * when the full rewrite pipeline failed, using the user's question and

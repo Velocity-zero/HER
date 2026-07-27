@@ -130,6 +130,9 @@ Generate a single short message.`;
           ],
           max_tokens: 100,
           temperature: 0.85,
+          top_p: 0.9,
+          frequency_penalty: 0,
+          presence_penalty: 0,
         }),
         signal: AbortSignal.timeout(10_000),
       });
@@ -264,7 +267,7 @@ const NUDGE_FALLBACKS = [
   "hey. random thought — how are you actually doing?",
 ];
 
-function getRandomFallback(type: string): string {
+export function getRandomFallback(type: string): string {
   const pool =
     type === "followup" ? FOLLOWUP_FALLBACKS :
     type === "nudge" ? NUDGE_FALLBACKS :

@@ -19,7 +19,7 @@ import * as path from "path";
 process.env.HER_PROVIDER_DEBUG = "true";
 process.env.HER_MIGRATION_DEBUG = "true";
 process.env.HER_DEBUG_PROMPTS = "true";
-process.env.NODE_ENV = "development";
+(process.env as Record<string, string>).NODE_ENV = "development";
 
 export interface QATurnResult {
   id: number;

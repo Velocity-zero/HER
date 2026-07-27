@@ -182,7 +182,7 @@ export async function updateMemoryFact(
   }
 }
 
-// ── Memory Extraction (via Mistral) ────────────────────────
+// ── Memory Extraction (via Qwen3-Next-80B) ────────────────────────
 
 const EXTRACTION_PROMPT = `You are a memory extraction system. Your job is to read a conversation and extract important facts about the USER (not the assistant).
 
@@ -218,7 +218,54 @@ Intensity: 0.0 (barely felt) to 1.0 (very strong)
 If nothing worth remembering: just write NONE`;
 
 /**
- * Extract memorable facts from a conversation using Mistral.
+ * Parses a single memory extraction line from Qwen3-Next-80B-A3B-Instruct.
+ * Supports full format: category|confidence|emotion|intensity: fact
+ * and legacy pipe/colon formats.
+ */
+export function parseMemoryExtractionLine(line: string): {
+  category: string;
+  confidence: number;
+  emotion: string;
+  intensity: number;
+  fact: string;
+} | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.toUpperCase() === "NONE") return null;
+
+  let cat: string;
+  let fact: string;
+  let confidence = 0.8;
+  let emotion = "neutral";
+  let intensity = 0.2;
+
+  // Full format: category|0.95|anxious|0.7: fact
+  const fullMatch = trimmed.match(/^(\w+)\|(\d*\.?\d+)\|(\w+)\|(\d*\.?\d+):\s*(.+)/);
+  if (fullMatch) {
+    cat = fullMatch[1].toLowerCase();
+    confidence = parseFloat(fullMatch[2]);
+    emotion = fullMatch[3].toLowerCase();
+    intensity = parseFloat(fullMatch[4]);
+    fact = fullMatch[5].trim();
+  } else {
+    // Legacy: category|confidence: fact
+    const pipeMatch = trimmed.match(/^(\w+)\|(\d*\.?\d+):\s*(.+)/);
+    if (pipeMatch) {
+      cat = pipeMatch[1].toLowerCase();
+      confidence = parseFloat(pipeMatch[2]);
+      fact = pipeMatch[3].trim();
+    } else {
+      const colonIdx = trimmed.indexOf(":");
+      if (colonIdx === -1) return null;
+      cat = trimmed.slice(0, colonIdx).trim().toLowerCase();
+      fact = trimmed.slice(colonIdx + 1).trim();
+    }
+  }
+
+  return { category: cat, confidence, emotion, intensity, fact };
+}
+
+/**
+ * Extract memorable facts from a conversation using Qwen3-Next-80B-A3B-Instruct.
  * Returns parsed entries ready for storage.
  */
 export async function extractMemories(
@@ -260,38 +307,10 @@ export async function extractMemories(
     const entries: { fact: string; category: MemoryCategory; confidence: number; emotion: string; intensity: number }[] = [];
 
     for (const line of response.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+      const parsed = parseMemoryExtractionLine(line);
+      if (!parsed) continue;
 
-      // Parse "category|confidence|emotion|intensity: fact" or legacy formats
-      let cat: string;
-      let fact: string;
-      let confidence = 0.8;
-      let emotion = "neutral";
-      let intensity = 0.2;
-
-      // Full format: category|0.95|anxious|0.7: fact
-      const fullMatch = trimmed.match(/^(\w+)\|(\d*\.?\d+)\|(\w+)\|(\d*\.?\d+):\s*(.+)/);
-      if (fullMatch) {
-        cat = fullMatch[1].toLowerCase();
-        confidence = parseFloat(fullMatch[2]);
-        emotion = fullMatch[3].toLowerCase();
-        intensity = parseFloat(fullMatch[4]);
-        fact = fullMatch[5].trim();
-      } else {
-        // Legacy: category|confidence: fact
-        const pipeMatch = trimmed.match(/^(\w+)\|(\d*\.?\d+):\s*(.+)/);
-        if (pipeMatch) {
-          cat = pipeMatch[1].toLowerCase();
-          confidence = parseFloat(pipeMatch[2]);
-          fact = pipeMatch[3].trim();
-        } else {
-          const colonIdx = trimmed.indexOf(":");
-          if (colonIdx === -1) continue;
-          cat = trimmed.slice(0, colonIdx).trim().toLowerCase();
-          fact = trimmed.slice(colonIdx + 1).trim();
-        }
-      }
+      const { category: cat, confidence, emotion, intensity, fact } = parsed;
 
       // Filter by confidence threshold
       if (confidence < 0.6) continue;
