@@ -1,6 +1,7 @@
 import { Message } from "@/lib/types";
 import { isTouchDevice } from "@/lib/utils";
-import { memo, useState, useRef, useCallback, type TouchEvent as ReactTouchEvent } from "react";
+import { memo, useState, useRef, useCallback, useEffect, type TouchEvent as ReactTouchEvent } from "react";
+import { logPipelineStage } from "@/lib/pipeline-logger";
 
 /**
  * MessageBubble — A single message in the conversation.
@@ -88,10 +89,8 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
   const [copied, setCopied] = useState(false);
   const [showReplyBtn, setShowReplyBtn] = useState(false);
   const [showEmojiTray, setShowEmojiTray] = useState(false);
-  // Desktop hover action bar for user messages (replaces direct emoji-tray on hover)
+  // Desktop hover action bar for user messages
   const [showActionBar, setShowActionBar] = useState(false);
-  // Mobile long-press unified action sheet
-  const [showActionSheet, setShowActionSheet] = useState(false);
   // Inline edit state
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -106,6 +105,12 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
   if (isStreaming && showEmojiTray) {
     setShowEmojiTray(false);
   }
+
+  useEffect(() => {
+    if (!isUser && !isStreaming && message.content && process.env.NODE_ENV === "development") {
+      logPipelineStage("Rendered Message (React UI)", message.content);
+    }
+  }, [isUser, isStreaming, message.content]);
 
   // ── Swipe-to-reply state (touch only) ──
   const [swipeX, setSwipeX] = useState(0);
@@ -242,13 +247,12 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
     const target = e.target as HTMLElement;
     const isTextContent = target.closest(".msg-text-selectable") !== null;
 
-    // Long-press → unified action sheet (mobile). Covers all messages — the
-    // sheet content is filtered by canEdit / canDelete / canReact per message.
+    // Long-press → full emoji tray (mobile). Covers all messages.
     if ((canReact || canEdit || canDelete) && !isTextContent) {
       if (longPressTimer.current) clearTimeout(longPressTimer.current);
       longPressTimer.current = setTimeout(() => {
         longPressFired.current = true;
-        setShowActionSheet(true);
+        setShowEmojiTray(true);
         // Haptic feedback
         if (navigator.vibrate) navigator.vibrate(15);
       }, LONG_PRESS_MS);
@@ -672,6 +676,48 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
                 <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z" />
               </svg>
             </button>
+            {/* Divider (mobile) */}
+            <div className="mx-0.5 h-4 w-[1px] bg-her-border/15 sm:hidden" />
+            {/* Copy (mobile) */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleCopyText(); setShowEmojiTray(false); }}
+              className="flex h-8 min-w-[40px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/50 transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60 sm:hidden"
+              aria-label={copied ? "Copied" : "Copy"}
+            >
+              {copied ? "✓" : "copy"}
+            </button>
+            {/* Edit — user messages only (mobile) */}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEmojiTray(false);
+                  setIsEditing(true);
+                  setEditContent(message.content);
+                }}
+                className="flex h-8 min-w-[40px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/50 transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60 sm:hidden"
+                aria-label="Edit"
+              >
+                edit
+              </button>
+            )}
+            {/* Delete — user messages only (mobile) */}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEmojiTray(false);
+                  onDelete!(message.id);
+                }}
+                className="flex h-8 min-w-[40px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/40 transition-all duration-150 active:scale-[0.85] hover:bg-red-50 hover:text-red-400 dark:hover:bg-red-900/20 sm:hidden"
+                aria-label="Delete"
+              >
+                del
+              </button>
+            )}
             {/* Hidden input to trigger native emoji keyboard */}
             <input
               ref={emojiInputRef}
@@ -683,77 +729,6 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
               onBlur={() => { if (emojiInputRef.current) emojiInputRef.current.value = ""; }}
               tabIndex={-1}
             />
-          </div>
-        </>
-      )}
-
-      {/* Mobile action sheet — triggered by long-press, replaces direct emoji tray */}
-      {showActionSheet && (
-        <>
-          <div
-            className="fixed inset-0 z-40 sm:hidden"
-            onClick={() => setShowActionSheet(false)}
-            onTouchEnd={() => setShowActionSheet(false)}
-            aria-hidden="true"
-          />
-          <div
-            role="group"
-            aria-label="Message actions"
-            className={`animate-emoji-tray absolute -top-11 z-50 flex items-center gap-0.5 rounded-full border border-her-border/15 bg-white/95 px-1.5 py-1 shadow-[0_4px_20px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.04)] backdrop-blur-sm dark:bg-her-bg/95 sm:hidden ${
-              isUser ? "right-0" : "left-0"
-            }`}
-          >
-            {/* React */}
-            {canReact && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setShowActionSheet(false); setShowEmojiTray(true); }}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-[16px] transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60"
-                aria-label="React"
-              >
-                😊
-              </button>
-            )}
-            {/* Copy */}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); handleCopyText(); setShowActionSheet(false); }}
-              className="flex h-8 min-w-[44px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/50 transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60"
-              aria-label={copied ? "Copied" : "Copy"}
-            >
-              {copied ? "✓" : "copy"}
-            </button>
-            {/* Edit — user messages only */}
-            {canEdit && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowActionSheet(false);
-                  setIsEditing(true);
-                  setEditContent(message.content);
-                }}
-                className="flex h-8 min-w-[44px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/50 transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60"
-                aria-label="Edit"
-              >
-                edit
-              </button>
-            )}
-            {/* Delete — user messages only */}
-            {canDelete && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowActionSheet(false);
-                  onDelete!(message.id);
-                }}
-                className="flex h-8 min-w-[44px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] text-her-text-muted/40 transition-all duration-150 active:scale-[0.85] hover:bg-red-50 hover:text-red-400 dark:hover:bg-red-900/20"
-                aria-label="Delete"
-              >
-                del
-              </button>
-            )}
           </div>
         </>
       )}

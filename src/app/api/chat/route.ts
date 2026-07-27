@@ -183,6 +183,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (process.env.HER_DEBUG_PROMPTS === "true" && process.env.NODE_ENV === "development") {
+      console.log("=================================");
+      console.log("[HER DEBUG PROMPTS] Assembled System Prompt:\n", finalPayload[0]?.content);
+      console.log("=================================");
+    }
+
     debug(
       `[HER API] ${body.messages.length} msgs → ${finalPayload.length} payload (stream: ${wantsStream})`
     );
@@ -194,11 +200,15 @@ export async function POST(req: NextRequest) {
         async start(controller) {
           const encoder = new TextEncoder();
           let chunksEmitted = 0;
+          let accumulatedText = "";
           try {
             for await (const chunk of generateStreamReply(finalPayload)) {
+              accumulatedText += chunk;
               controller.enqueue(encoder.encode(chunk));
               chunksEmitted++;
             }
+            const { logPipelineStage } = await import("../../../lib/pipeline-logger");
+            logPipelineStage("API Response (Stream Controller Ready)", accumulatedText);
             controller.close();
             trace.stage("llm_stream_end", { chunks: chunksEmitted });
             trace.end({ outcome: "stream_ok", chunks: chunksEmitted });
@@ -263,6 +273,9 @@ export async function POST(req: NextRequest) {
     }
     trace.stage("llm_request_end", { replyChars: reply.length });
     trace.end({ outcome: "ok", replyChars: reply.length });
+
+    const { logPipelineStage } = await import("../../../lib/pipeline-logger");
+    logPipelineStage("API Response (JSON Ready)", reply);
 
     return NextResponse.json({
       message: reply,

@@ -17,6 +17,7 @@ import { analyzeInteractionPattern, saveInteractionPattern } from "@/lib/interac
 import { selectResponseMode } from "@/lib/response-mode";
 import { checkRepetition } from "@/lib/anti-repetition-runtime";
 import { humanDelay, authFetch } from "@/lib/utils";
+import { logPipelineStage } from "@/lib/pipeline-logger";
 import {
   initPersistence,
   getEffectiveUserId,
@@ -1319,6 +1320,8 @@ export default function ChatPage() {
       if (!fullText) {
         throw new Error("wait something broke on my end — try that again?");
       }
+
+      logPipelineStage("Client Stream Consumer (Chunk Assembly Complete)", fullText);
 
       // Ensure final state is clean
       setMessages((prev) =>

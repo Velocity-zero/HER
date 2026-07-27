@@ -1,7 +1,7 @@
 # HER — Your AI Companion
 
 A warm, emotionally immersive AI companion web app inspired by the film *Her* (2013).  
-Built with **Next.js**, **TypeScript**, **Tailwind CSS**, and **NVIDIA NIM** (Mistral Large 3).
+Built with **Next.js**, **TypeScript**, **Tailwind CSS**, and **NVIDIA NIM** (Qwen3-Next-80B-A3B-Instruct).
 
 ---
 
@@ -47,7 +47,7 @@ NVIDIA_CHAT_API_KEY=your_chat_key_here
 **To get a free NVIDIA NIM API key:**
 1. Go to [NVIDIA Build](https://build.nvidia.com/)
 2. Sign in or create an NVIDIA account
-3. Search for **Mistral Large 3** and click **"Get API Key"**
+3. Search for **Qwen3-Next-80B-A3B-Instruct** and click **"Get API Key"**
 4. Copy the key and paste it in place of `your_chat_key_here`
 
 > ⚠️ **Important:** The `.env.local` file is intentionally excluded from the zip for security. Each person needs their own API key.
@@ -163,7 +163,7 @@ npm run dev
 - **React 19** — UI framework
 - **TypeScript 5** — Type safety
 - **Tailwind CSS 4** — Styling (warm analog palette)
-- **NVIDIA NIM / Mistral Large 3** — AI chat model via NVIDIA API
+- **NVIDIA NIM / Qwen3-Next-80B-A3B-Instruct** — AI chat model via NVIDIA API
 - **NVIDIA Gemma 3 27B** — Vision analysis
 - **NVIDIA Stable Diffusion / Flux** — Image generation
 

@@ -185,6 +185,9 @@ export async function saveMessageToSupabase(params: {
   if (!client) return null;
 
   try {
+    const { logPipelineStage } = await import("./pipeline-logger");
+    logPipelineStage("Persistence (Before Save)", params.content);
+
     const { data, error } = await client.from("messages").insert({
       conversation_id: params.conversationId,
       user_id: params.userId,
@@ -195,12 +198,17 @@ export async function saveMessageToSupabase(params: {
       reply_to_content: params.replyToContent || null,
       reply_to_role: params.replyToRole || null,
       client_message_id: params.clientMessageId || null,
-    }).select("id").single();
+    }).select("id, content").single();
 
     if (error) {
       console.warn(`[HER DB] Save ${params.role} message failed:`, error.message);
       return null;
     }
+
+    if (data?.content) {
+      logPipelineStage("Persistence (After Save Readback)", data.content);
+    }
+
     return data?.id ?? null;
   } catch (err) {
     console.warn(`[HER DB] Save ${params.role} message exception:`, err);
