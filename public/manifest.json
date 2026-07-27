@@ -12,35 +12,35 @@
   "categories": ["lifestyle", "social"],
   "icons": [
     {
-      "src": "/icons/favicon-32x32.png",
+      "src": "/icons/favicon-32x32.png?v=5",
       "sizes": "32x32",
       "type": "image/png"
     },
     {
-      "src": "/icons/apple-touch-icon.png",
+      "src": "/icons/apple-touch-icon.png?v=5",
       "sizes": "180x180",
       "type": "image/png"
     },
     {
-      "src": "/icons/icon-192x192.png",
+      "src": "/icons/icon-192x192.png?v=5",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-192x192-maskable.png",
+      "src": "/icons/icon-192x192-maskable.png?v=5",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "/icons/icon-512x512.png",
+      "src": "/icons/icon-512x512.png?v=5",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icons/icon-512x512-maskable.png",
+      "src": "/icons/icon-512x512-maskable.png?v=5",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
