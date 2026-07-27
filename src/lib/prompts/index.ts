@@ -31,6 +31,8 @@ import { MODE_OVERLAYS } from "./modes";
 import { buildRapportContext, type RapportLevel } from "../rapport";
 import { buildPersonalityAnchor } from "../personality-guard";
 import { formatLocalTimeView, buildCurrentTimePromptBlock } from "../timezone";
+import { buildInternalMindPrompt, computeInternalMindState } from "../internal-mind";
+import { buildPresencePrompt } from "../presence";
 
 // ── Public Exports ─────────────────────────────────────────
 
@@ -58,11 +60,12 @@ export const RETURNING_GREETINGS = [
 
 /** Greetings for familiar/close users (rapport 3+) */
 export const CLOSE_GREETINGS = [
-  "hiii. tell me everything.",
-  "heyyy. i was literally just thinking about something random.",
-  "finally. okay what's new?",
-  "hey. missed me? obviously you did.",
-  "okay i'm back. what did i miss?",
+  "hey you.",
+  "oh hey, i was just thinking about you.",
+  "you're back.",
+  "hey. tell me everything.",
+  "there you are.",
+  "hey, what's going on?",
 ];
 
 /** Backward-compatible flat list */
@@ -94,6 +97,10 @@ interface PromptOptions {
   continuityContext?: string;
   /** IANA timezone name from the user's browser (e.g. "Asia/Kolkata") */
   userTimezone?: string;
+  /** Step 18 HER Internal Mind & Relationship State Engine prompt block */
+  internalMindContext?: string;
+  /** Step 19 Conversational Presence & Emergent Dialogue prompt block */
+  presenceContext?: string;
 }
 
 /**
@@ -126,10 +133,26 @@ export function buildSystemPrompt(options: PromptOptions = {}): string {
     BOUNDARIES,
   ];
 
-  // Inject memory context (future long-term memory)
+  // Step 18 — HER Internal Mind & Relationship State Engine
+  const mindPrompt =
+    options.internalMindContext ??
+    buildInternalMindPrompt(
+      computeInternalMindState([], options.rapportLevel ?? 0, options.memoryContext)
+    );
+  layers.push(mindPrompt);
+
+  // Step 19 — Conversational Presence & Emergent Dialogue
+  const presencePrompt = options.presenceContext ?? buildPresencePrompt();
+  layers.push(presencePrompt);
+
+  // Inject memory context (Step 17A deep continuity & implicit memory weighting)
   if (options.memoryContext) {
     layers.push(
-      `THINGS YOU REMEMBER ABOUT THIS PERSON:\n${options.memoryContext}`
+      `SHARED HISTORY & PERSISTENT MEMORY:\n${options.memoryContext}\n` +
+        `(Weighting: Current message > Recent chat > Memories > Emotional state > Relationship history. ` +
+        `Let these memories quietly shape your understanding and scene construction. ` +
+        `NEVER list or quote these facts explicitly with meta-phrases like "i remember" or "you told me". ` +
+        `Use them to build deep continuity naturally.)`
     );
   }
 

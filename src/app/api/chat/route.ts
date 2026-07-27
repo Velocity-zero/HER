@@ -193,6 +193,20 @@ export async function POST(req: NextRequest) {
       `[HER API] ${body.messages.length} msgs → ${finalPayload.length} payload (stream: ${wantsStream})`
     );
 
+    // ── Pre-check provider API key before stream/request execution ──
+    const chatApiKey = process.env.NVIDIA_CHAT_API_KEY || process.env.NVIDIA_API_KEY;
+    if (!chatApiKey || chatApiKey === "your_chat_key_here" || chatApiKey === "your_image_key_here") {
+      const missingKeyMsg = "Missing NVIDIA_CHAT_API_KEY. Add it to your .env.local file.";
+      console.error("[HER API] Key error:", missingKeyMsg);
+      if (wantsStream) {
+        return new Response(missingKeyMsg, { status: 500 });
+      }
+      return NextResponse.json(
+        { message: "", error: missingKeyMsg } as ChatResponse,
+        { status: 500 }
+      );
+    }
+
     // ── Streaming path ──
     if (wantsStream) {
       trace.stage("llm_stream_start");
@@ -222,14 +236,16 @@ export async function POST(req: NextRequest) {
             });
             trace.stage("llm_stream_error", { code: cls.code, chunksBeforeError: chunksEmitted });
             trace.end({ outcome: "stream_error", code: cls.code });
-            // If no chunks were emitted, close cleanly so the client gets a proper error
-            // If chunks were already sent, error the stream to signal failure
+            // If no chunks were emitted, enqueue descriptive error text so client receives the actual error
             if (chunksEmitted === 0) {
+              const userErrorText = msg.includes("Missing NVIDIA_CHAT_API_KEY") || msg.includes("not configured")
+                ? msg
+                : cls.userMessage;
+              controller.enqueue(encoder.encode(userErrorText));
               controller.close();
             } else {
               controller.error(err);
             }
-            void msg;
           }
         },
       });

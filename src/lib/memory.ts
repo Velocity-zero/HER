@@ -339,7 +339,244 @@ export async function extractMemories(
  * Rules (Part E): no timestamps, no technical labels, no repetition, max 8 items.
  * Emotional memories get subtle tone hints.
  */
-export function formatMemoryForPrompt(memories: MemoryEntry[]): string | null {
+// ── Narrative Memory Ranking & Story Grouping (Step 17B) ────────────────
+
+export interface NarrativeScoreWeights {
+  topicRelevance: number;        // ★★★★★ (5)
+  emotionalRelevance: number;    // ★★★★★ (5)
+  unfinishedStory: number;       // ★★★★★ (5)
+  recentConversation: number;    // ★★★★☆ (4)
+  revisitedMilestone: number;    // ★★★★☆ (4)
+  relationshipSignificance: number; // ★★★★☆ (4)
+  ageDecay: number;              // ★★☆☆☆ (2)
+  wordingSimilarity: number;     // ★★☆☆☆ (2)
+}
+
+export const DEFAULT_NARRATIVE_WEIGHTS: NarrativeScoreWeights = {
+  topicRelevance: 5,
+  emotionalRelevance: 5,
+  unfinishedStory: 5,
+  recentConversation: 4,
+  revisitedMilestone: 4,
+  relationshipSignificance: 4,
+  ageDecay: 2,
+  wordingSimilarity: 2,
+};
+
+/**
+ * Calculates a weighted narrative score for a memory across 8 human dimensions.
+ */
+export function calculateNarrativeScore(
+  memory: MemoryEntry,
+  context?: { topic?: string; emotion?: string }
+): number {
+  const factLower = memory.fact.toLowerCase();
+  const cat = memory.category;
+  const confidence = memory.confidence ?? 0.8;
+
+  let topicScore = 0;
+  if (context?.topic) {
+    const queryWords = context.topic.toLowerCase().split(/\s+/);
+    const matchedWords = queryWords.filter((w) => w.length > 2 && factLower.includes(w));
+    topicScore = matchedWords.length > 0 ? Math.min(1.0, matchedWords.length * 0.4) : 0;
+  }
+
+  let emotionScore = 0;
+  if (context?.emotion && memory.emotion && memory.emotion !== "neutral") {
+    if (context.emotion.toLowerCase() === memory.emotion.toLowerCase()) {
+      emotionScore = 1.0;
+    } else if (memory.intensity && memory.intensity >= 0.6) {
+      emotionScore = 0.6;
+    }
+  }
+
+  // Unfinished story / active life situation (career, project, open problem)
+  const isUnfinished =
+    cat === "context" ||
+    factLower.includes("trying to") ||
+    factLower.includes("figuring out") ||
+    factLower.includes("building") ||
+    factLower.includes("searching") ||
+    factLower.includes("next") ||
+    factLower.includes("interview") ||
+    factLower.includes("goal");
+  const unfinishedScore = isUnfinished ? 1.0 : 0.2;
+
+  // Recent conversation / updated_at freshness
+  const recencyScore = memory.updated_at ? 0.8 : 0.5;
+
+  // Life milestone / revisited importance
+  const isMilestone =
+    cat === "life" ||
+    factLower.includes("internship") ||
+    factLower.includes("job") ||
+    factLower.includes("university") ||
+    factLower.includes("her") ||
+    factLower.includes("family");
+  const milestoneScore = isMilestone ? 1.0 : 0.4;
+
+  // Relationship significance (identity, trust, close taste)
+  const relationshipScore = cat === "identity" ? 1.0 : cat === "emotional" ? 0.8 : 0.5;
+
+  // Age decay (not penalizing timeless identity/life facts heavily)
+  const ageScore = cat === "identity" || cat === "life" ? 0.9 : 0.7;
+
+  // Exact wording similarity (minor signal compared to story relevance)
+  const wordingScore = topicScore;
+
+  const w = DEFAULT_NARRATIVE_WEIGHTS;
+  const rawScore =
+    topicScore * w.topicRelevance +
+    emotionScore * w.emotionalRelevance +
+    unfinishedScore * w.unfinishedStory +
+    recencyScore * w.recentConversation +
+    milestoneScore * w.revisitedMilestone +
+    relationshipScore * w.relationshipSignificance +
+    ageScore * w.ageDecay +
+    wordingScore * w.wordingSimilarity;
+
+  const maxPossible =
+    w.topicRelevance +
+    w.emotionalRelevance +
+    w.unfinishedStory +
+    w.recentConversation +
+    w.revisitedMilestone +
+    w.relationshipSignificance +
+    w.ageDecay +
+    w.wordingSimilarity;
+
+  // Scale by confidence
+  return (rawScore / maxPossible) * confidence;
+}
+
+/**
+ * Ranks memories using weighted narrative scoring and filters low confidence (< 0.6).
+ */
+export function rankNarrativeMemories(
+  memories: MemoryEntry[],
+  context?: { topic?: string; emotion?: string }
+): MemoryEntry[] {
+  return memories
+    .filter((m) => (m.confidence ?? 0.8) >= 0.6)
+    .sort((a, b) => {
+      const scoreB = calculateNarrativeScore(b, context);
+      const scoreA = calculateNarrativeScore(a, context);
+      if (Math.abs(scoreB - scoreA) > 0.05) return scoreB - scoreA;
+      return (b.confidence ?? 0.8) - (a.confidence ?? 0.8);
+    });
+}
+
+/**
+ * Groups memories into canonical life stories so HER retrieves narratives instead of fragments.
+ */
+export function groupMemoriesIntoStories(
+  memories: MemoryEntry[]
+): { storyName: string; memories: MemoryEntry[] }[] {
+  const storyRules: { name: string; match: (fact: string, cat: MemoryCategory) => boolean }[] = [
+    {
+      name: "Career & Ambition",
+      match: (f) =>
+        f.includes("internship") ||
+        f.includes("job") ||
+        f.includes("company") ||
+        f.includes("salary") ||
+        f.includes("offer") ||
+        f.includes("career") ||
+        f.includes("work") ||
+        f.includes("opportunity"),
+    },
+    {
+      name: "HER Development",
+      match: (f) =>
+        f.includes("her") ||
+        f.includes("codebase") ||
+        f.includes("building") ||
+        f.includes("project") ||
+        f.includes("programming") ||
+        f.includes("app"),
+    },
+    {
+      name: "Fitness & Discipline",
+      match: (f) =>
+        f.includes("gym") ||
+        f.includes("discipline") ||
+        f.includes("workout") ||
+        f.includes("fitness") ||
+        f.includes("sleep") ||
+        f.includes("routine"),
+    },
+    {
+      name: "University & Studies",
+      match: (f) =>
+        f.includes("university") ||
+        f.includes("college") ||
+        f.includes("study") ||
+        f.includes("exam") ||
+        f.includes("degree"),
+    },
+    {
+      name: "Relationships & Family",
+      match: (f) =>
+        f.includes("family") ||
+        f.includes("friend") ||
+        f.includes("relationship") ||
+        f.includes("home") ||
+        f.includes("parents"),
+    },
+    {
+      name: "Creative Projects & Reading",
+      match: (f) =>
+        f.includes("read") ||
+        f.includes("book") ||
+        f.includes("white nights") ||
+        f.includes("music") ||
+        f.includes("lo-fi") ||
+        f.includes("art") ||
+        f.includes("creative"),
+    },
+  ];
+
+  const grouped: Record<string, MemoryEntry[]> = {};
+  const ungrouped: MemoryEntry[] = [];
+
+  for (const m of memories) {
+    const fLower = m.fact.toLowerCase();
+    let placed = false;
+    for (const rule of storyRules) {
+      if (rule.match(fLower, m.category)) {
+        if (!grouped[rule.name]) grouped[rule.name] = [];
+        grouped[rule.name].push(m);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      ungrouped.push(m);
+    }
+  }
+
+  const stories: { storyName: string; memories: MemoryEntry[] }[] = [];
+  for (const [name, ms] of Object.entries(grouped)) {
+    if (ms.length > 0) {
+      stories.push({ storyName: name, memories: ms });
+    }
+  }
+
+  if (ungrouped.length > 0) {
+    stories.push({ storyName: "Personal Life & Context", memories: ungrouped });
+  }
+
+  return stories;
+}
+
+/**
+ * Format memory entries into a narrative context string for the system prompt.
+ * Step 17B: Ranks by weighted narrative score and groups into coherent Life Stories.
+ */
+export function formatMemoryForPrompt(
+  memories: MemoryEntry[],
+  context?: { topic?: string; emotion?: string }
+): string | null {
   if (memories.length === 0) return null;
 
   // Deduplicate
@@ -351,29 +588,64 @@ export function formatMemoryForPrompt(memories: MemoryEntry[]): string | null {
     return true;
   });
 
-  // Take top 8 (already ranked if coming from rankMemories)
-  const top = unique.slice(0, 8);
+  // 1. Rank by weighted narrative scoring
+  const ranked = rankNarrativeMemories(unique, context);
+  if (ranked.length === 0) return null;
 
-  // Build natural lines — no category labels, no timestamps
-  const lines = top.map((m) => {
-    let line = `- ${m.fact}`;
-    // Subtle emotional hint for high-intensity memories
-    if (m.emotion && m.emotion !== "neutral" && m.intensity && m.intensity >= 0.6) {
-      const emotionHints: Record<string, string> = {
-        anxious: "(this seemed to worry them)",
-        stressed: "(this was weighing on them)",
-        excited: "(they were really excited about this)",
-        sad: "(this was a sensitive topic)",
-        happy: "(this made them happy)",
-        hurt: "(this was painful for them)",
-        hopeful: "(they were hopeful about this)",
-        frustrated: "(this frustrated them)",
-      };
-      const hint = emotionHints[m.emotion];
-      if (hint) line += " " + hint;
+  // Take top 8 highest narrative-scoring memories
+  const top = ranked.slice(0, 8);
+
+  // 2. Group into Life Stories so HER retrieves coherent narratives instead of isolated fragments
+  const stories = groupMemoriesIntoStories(top);
+
+  const lines: string[] = [];
+
+  for (const story of stories) {
+    if (story.memories.length > 1) {
+      // Grouped narrative story thread
+      const threadFacts = story.memories
+        .map((m) => {
+          let text = m.fact;
+          if (m.emotion && m.emotion !== "neutral" && m.intensity && m.intensity >= 0.6) {
+            const emotionHints: Record<string, string> = {
+              anxious: "(weighed on them)",
+              stressed: "(caused stress)",
+              excited: "(excited them)",
+              sad: "(sensitive topic)",
+              happy: "(made them happy)",
+              hurt: "(was painful)",
+              hopeful: "(felt hopeful)",
+              frustrated: "(frustrated them)",
+            };
+            const hint = emotionHints[m.emotion];
+            if (hint) text += ` ${hint}`;
+          }
+          return text;
+        })
+        .join(" → ");
+
+      lines.push(`- [${story.storyName}] ${threadFacts}`);
+    } else {
+      // Single item in story
+      const m = story.memories[0];
+      let line = `- ${m.fact}`;
+      if (m.emotion && m.emotion !== "neutral" && m.intensity && m.intensity >= 0.6) {
+        const emotionHints: Record<string, string> = {
+          anxious: "(this seemed to worry them)",
+          stressed: "(this was weighing on them)",
+          excited: "(they were really excited about this)",
+          sad: "(this was a sensitive topic)",
+          happy: "(this made them happy)",
+          hurt: "(this was painful for them)",
+          hopeful: "(they were hopeful about this)",
+          frustrated: "(this frustrated them)",
+        };
+        const hint = emotionHints[m.emotion];
+        if (hint) line += ` ${hint}`;
+      }
+      lines.push(line);
     }
-    return line;
-  });
+  }
 
   return lines.join("\n");
 }

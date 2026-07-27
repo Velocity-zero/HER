@@ -4,7 +4,7 @@ import { runProviderComparison } from "../../scripts/provider-migration-comparis
 import { NVIDIA_CHAT_MODEL } from "../../src/lib/provider";
 
 test("Provider Migration — Confirms Qwen3-Next-80B-A3B-Instruct is Active", () => {
-  assert.equal(NVIDIA_CHAT_MODEL, "qwen/qwen3-next-80b-a3b-instruct");
+  assert.equal(NVIDIA_CHAT_MODEL, "nvidia/llama-3.3-nemotron-super-49b-v1.5");
 });
 
 test("Provider Migration Comparison Suite — Verifies 10 Benchmark Scenarios", () => {

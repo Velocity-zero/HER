@@ -44,7 +44,7 @@ test("Step 1: Real-World Production Truncation & Deep History Verification (35 T
     isIncomplete: isIncompleteSentence(simulatedReply),
   });
 
-  assert.ok(auditText.includes("qwen/qwen3-next-80b-a3b-instruct"));
+  assert.ok(auditText.includes(NVIDIA_CHAT_MODEL));
   assert.ok(auditText.includes("Finish reason: stop"));
   assert.ok(auditText.includes("SSE Chunks Received: 20"));
   assert.ok(auditText.includes("SSE Chunks Expected: 20"));

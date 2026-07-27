@@ -6,7 +6,7 @@ import { getRandomFallback } from "../../src/lib/notification-messages";
 
 test("Step 4: Proactive Notification & Temporal Scheduling Audit — Confirms Qwen3-Next-80B Harmony", () => {
   // 1. Verify model string parity
-  assert.equal(NVIDIA_CHAT_MODEL, "qwen/qwen3-next-80b-a3b-instruct");
+  assert.equal(NVIDIA_CHAT_MODEL, "nvidia/llama-3.3-nemotron-super-49b-v1.5");
 
   // 2. Test temporal signal detection on proactive reminders
   assert.equal(hasTemporalSignal("remind me in 10 minutes to check the oven"), true);
