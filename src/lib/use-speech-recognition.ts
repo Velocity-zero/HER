@@ -46,14 +46,14 @@ export type MicPermissionState = "prompt" | "granted" | "denied" | "unsupported"
 export interface UseSpeechRecognitionOptions {
   onFinalTranscript?: (text: string) => void;
   onSpeechStart?: () => void;
-  silenceTimeoutMs?: number; // default: 1400ms
+  silenceTimeoutMs?: number; // default: 1300ms
   lang?: string;
 }
 
 export function useSpeechRecognition({
   onFinalTranscript,
   onSpeechStart,
-  silenceTimeoutMs = 1400,
+  silenceTimeoutMs = 1300,
   lang = "en-US",
 }: UseSpeechRecognitionOptions = {}) {
   const [isListening, setIsListening] = useState(false);
@@ -83,13 +83,32 @@ export function useSpeechRecognition({
   const finalTranscriptAccumulatorRef = useRef("");
   const consecutiveErrorsRef = useRef(0);
 
-  // Check Web Speech API support on mount
+  // Check Web Speech API support & initial permission query on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const hasSpeech = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
       if (!hasSpeech) {
         setMicPermission("unsupported");
         setErrorMessage("Speech recognition is not supported in this browser");
+        return;
+      }
+
+      // Check existing permission if Permissions API is supported
+      if (navigator.permissions && navigator.permissions.query) {
+        navigator.permissions
+          .query({ name: "microphone" as PermissionName })
+          .then((perm) => {
+            if (perm.state === "granted") setMicPermission("granted");
+            else if (perm.state === "denied") setMicPermission("denied");
+            else setMicPermission("prompt");
+
+            perm.onchange = () => {
+              if (perm.state === "granted") setMicPermission("granted");
+              else if (perm.state === "denied") setMicPermission("denied");
+              else setMicPermission("prompt");
+            };
+          })
+          .catch(() => {});
       }
     }
   }, []);
@@ -129,6 +148,36 @@ export function useSpeechRecognition({
     }, silenceTimeoutMsRef.current);
   }, [clearSilenceTimer, transcript]);
 
+  /**
+   * Explicitly requests native browser microphone permission via getUserMedia,
+   * then immediately releases the tracks so the hardware is free for SpeechRecognition.
+   * This is required on mobile browsers to show the native system "Allow Microphone" dialog.
+   */
+  const requestMicPermission = useCallback(async (): Promise<boolean> => {
+    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setMicPermission("unsupported");
+      return false;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // CRITICAL: Immediately stop all tracks to release hardware exclusive lock!
+      stream.getTracks().forEach((track) => track.stop());
+      setMicPermission("granted");
+      setErrorMessage(null);
+      return true;
+    } catch (err: unknown) {
+      const errorName = (err as { name?: string })?.name;
+      if (errorName === "NotAllowedError" || errorName === "PermissionDeniedError") {
+        setMicPermission("denied");
+        setErrorMessage("Microphone permission denied. Please allow microphone in browser settings.");
+      } else {
+        setErrorMessage("Unable to access microphone.");
+      }
+      return false;
+    }
+  }, []);
+
   const stopListening = useCallback(() => {
     shouldListenRef.current = false;
     isStartingRef.current = false;
@@ -163,6 +212,16 @@ export function useSpeechRecognition({
 
       if (isStartingRef.current) return;
       isStartingRef.current = true;
+
+      // If microphone permission hasn't been granted yet, explicitly request it first
+      // so Chrome / mobile registers the site permission and pops the browser prompt
+      if (micPermission !== "granted") {
+        const granted = await requestMicPermission();
+        if (!granted) {
+          isStartingRef.current = false;
+          return;
+        }
+      }
 
       shouldListenRef.current = true;
       finalTranscriptAccumulatorRef.current = "";
@@ -296,7 +355,7 @@ export function useSpeechRecognition({
         setIsListening(false);
       }
     }
-  }, [restartSilenceTimer, submitTranscript, transcript]);
+  }, [micPermission, requestMicPermission, restartSilenceTimer, submitTranscript, transcript]);
 
   /**
    * Get dynamic volume (0.0 to 1.0) for visualizer pulse when listening.
@@ -327,6 +386,7 @@ export function useSpeechRecognition({
     transcript,
     micPermission,
     errorMessage,
+    requestMicPermission,
     startListening,
     stopListening,
     submitTranscript,

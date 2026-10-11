@@ -976,53 +976,52 @@ export default function ChatPage() {
     // Force-scroll to show the user's new message immediately
     setForceScrollTrigger((n) => n + 1);
 
-    // ── Persist user message to Supabase (fire-and-forget) ──
-    const userId = await getEffectiveUserId();
-    let convoId = activeConvoId;
+    // ── Persist user message to Supabase (non-blocking background task) ──
+    (async () => {
+      try {
+        const userId = await getEffectiveUserId();
+        let convoId = activeConvoId;
 
-    // If no active conversation, create one
-    if (!convoId) {
-      convoId = await getOrCreateConversation(userId, userMessage.content).catch(() => null);
-      if (convoId) {
-        setActiveConvoId(convoId);
-        setActiveConversationId(convoId);
-        // Pin the greeting to this conversation in localStorage so reload /
-        // convo-switch / notification-tap can re-prepend it. Without this,
-        // loadConversationMessages would replace [greeting, user, reply]
-        // with just [user, reply] from the DB.
-        const currentGreeting = messagesRef.current[0];
-        if (currentGreeting?.id === "greeting" && currentGreeting.content) {
-          console.log("[HER Bootstrap] persisting greeting for new convo", { convoId });
-          saveConversationGreeting(convoId, currentGreeting.content);
+        // If no active conversation, create one
+        if (!convoId) {
+          convoId = await getOrCreateConversation(userId, userMessage.content).catch(() => null);
+          if (convoId) {
+            setActiveConvoId(convoId);
+            setActiveConversationId(convoId);
+            const currentGreeting = messagesRef.current[0];
+            if (currentGreeting?.id === "greeting" && currentGreeting.content) {
+              saveConversationGreeting(convoId, currentGreeting.content);
+            }
+          }
+        } else {
+          // Smart session title: update title from first real user message
+          maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
         }
-      }
-    } else {
-      // ── Smart session title: update title from first real user message ──
-      maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
-    }
 
-    if (convoId) {
-      // Upload user-attached image to Storage first so the messages row stays small.
-      // Falls back to original data URL if storage isn't configured.
-      let userImageUrl: string | undefined = image || undefined;
-      if (userImageUrl && isDataUrl(userImageUrl)) {
-        userImageUrl = await uploadDataUrlToStorage(userId, userImageUrl);
-      }
+        if (convoId) {
+          let userImageUrl: string | undefined = image || undefined;
+          if (userImageUrl && isDataUrl(userImageUrl)) {
+            userImageUrl = await uploadDataUrlToStorage(userId, userImageUrl);
+          }
 
-      saveMessageToSupabase({
-        conversationId: convoId,
-        userId,
-        role: "user",
-        content: userMessage.content,
-        imageUrl: userImageUrl,
-        clientMessageId: userMessage.id,
-        ...(currentReply ? {
-          replyToId: currentReply.id,
-          replyToContent: currentReply.content,
-          replyToRole: currentReply.role,
-        } : {}),
-      }).catch(() => {});
-    }
+          saveMessageToSupabase({
+            conversationId: convoId,
+            userId,
+            role: "user",
+            content: userMessage.content,
+            imageUrl: userImageUrl,
+            clientMessageId: userMessage.id,
+            ...(currentReply ? {
+              replyToId: currentReply.id,
+              replyToContent: currentReply.content,
+              replyToRole: currentReply.role,
+            } : {}),
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.warn("[Background persistence]", err);
+      }
+    })();
 
     // Create a stable ID for the streaming assistant message
     const herMessageId = generateId();
@@ -1336,9 +1335,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, herPlaceholder]);
       setForceScrollTrigger((n) => n + 1);
 
-      await humanDelay();
-
-      // ── Read the stream chunk by chunk ──
+      // ── Read the stream chunk by chunk immediately ──
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
@@ -2191,6 +2188,7 @@ export default function ChatPage() {
         userTranscript={speechRec.transcript}
         micPermission={speechRec.micPermission}
         errorMessage={speechRec.errorMessage}
+        onRequestMicPermission={speechRec.requestMicPermission}
         startListening={speechRec.startListening}
         stopListening={speechRec.stopListening}
         submitTranscript={speechRec.submitTranscript}

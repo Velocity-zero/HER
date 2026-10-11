@@ -24,6 +24,7 @@ interface EarbudModeModalProps {
   userTranscript: string;
   micPermission: MicPermissionState;
   errorMessage: string | null;
+  onRequestMicPermission?: () => Promise<boolean>;
   startListening: () => void;
   stopListening: () => void;
   submitTranscript: () => void;
@@ -49,6 +50,7 @@ export default function EarbudModeModal({
   userTranscript,
   micPermission,
   errorMessage,
+  onRequestMicPermission,
   startListening,
   stopListening,
   submitTranscript,
@@ -336,23 +338,59 @@ export default function EarbudModeModal({
           />
         </div>
 
-        {/* Permission Warning Notice (if blocked) */}
-        {micPermission === "denied" && (
+        {/* Permission Request Needed Notice */}
+        {micPermission === "prompt" && (
           <div
-            className="my-2 max-w-sm rounded-xl bg-amber-50 border border-amber-200/80 p-3 text-center text-xs text-amber-800 animate-in fade-in"
+            className="my-2 max-w-sm rounded-2xl bg-her-surface/90 border border-her-border/40 p-3.5 text-center shadow-md animate-in fade-in"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="font-medium">Microphone permission blocked</p>
-            <p className="text-[11px] text-amber-700/80 mt-0.5">
-              Please click the lock/settings icon in your browser address bar and allow microphone access.
+            <p className="font-medium text-xs text-her-accent">Microphone Access Needed</p>
+            <p className="text-[11px] text-her-text-muted/70 mt-1">
+              Tap below so HER can hear your voice hands-free.
             </p>
             <button
               type="button"
-              onClick={() => setShowTextInput(true)}
-              className="mt-2 inline-flex items-center gap-1 rounded-full bg-amber-200/70 px-3 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-200 transition-colors"
+              onClick={async (e) => {
+                e.stopPropagation();
+                const ok = await onRequestMicPermission?.();
+                if (ok) startListening();
+              }}
+              className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-her-accent px-4 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-her-accent-hover active:scale-95 transition-all"
             >
-              ⌨️ type a message instead
+              🎙️ Allow Microphone
             </button>
+          </div>
+        )}
+
+        {/* Permission Warning Notice (if blocked) */}
+        {micPermission === "denied" && (
+          <div
+            className="my-2 max-w-sm rounded-2xl bg-amber-50 border border-amber-200/80 p-3.5 text-center text-xs text-amber-900 shadow-sm animate-in fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-semibold text-amber-900">Microphone Permission Blocked</p>
+            <p className="text-[11px] text-amber-800/80 mt-1 leading-relaxed">
+              In Chrome address bar, tap the lock or tune icon → Permissions → switch <strong>Microphone</strong> to <strong>Allow</strong>.
+            </p>
+            <div className="mt-2.5 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await onRequestMicPermission?.();
+                  if (ok) startListening();
+                }}
+                className="rounded-full bg-amber-200/80 px-3 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-300 transition-colors"
+              >
+                🔄 Retry Permission
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTextInput(true)}
+                className="rounded-full bg-her-surface px-3 py-1 text-[11px] font-medium text-her-text hover:bg-her-surface-light border border-her-border/40 transition-colors"
+              >
+                ⌨️ Type Instead
+              </button>
+            </div>
           </div>
         )}
 
@@ -492,12 +530,15 @@ export default function EarbudModeModal({
           {/* Main Microphone Button */}
           <button
             type="button"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
               if (isPlayingVoice) {
                 handleTapToInterrupt();
               } else if (userTranscript.trim()) {
                 submitTranscript();
+              } else if (micPermission !== "granted") {
+                const ok = await onRequestMicPermission?.();
+                if (ok) startListening();
               } else if (isListening) {
                 toggleMute();
               } else {
