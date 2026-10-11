@@ -979,29 +979,30 @@ export default function ChatPage() {
     // Force-scroll to show the user's new message immediately
     setForceScrollTrigger((n) => n + 1);
 
-    // ── Persist user message to Supabase (non-blocking background task) ──
-    (async () => {
-      try {
-        const userId = await getEffectiveUserId();
-        let convoId = activeConvoId;
+    // ── Persist user message to Supabase ──
+    const userId = await getEffectiveUserId();
+    let convoId = activeConvoId;
 
-        // If no active conversation, create one
-        if (!convoId) {
-          convoId = await getOrCreateConversation(userId, userMessage.content).catch(() => null);
-          if (convoId) {
-            setActiveConvoId(convoId);
-            setActiveConversationId(convoId);
-            const currentGreeting = messagesRef.current[0];
-            if (currentGreeting?.id === "greeting" && currentGreeting.content) {
-              saveConversationGreeting(convoId, currentGreeting.content);
-            }
-          }
-        } else {
-          // Smart session title: update title from first real user message
-          maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
+    // If no active conversation, create one
+    if (!convoId) {
+      convoId = await getOrCreateConversation(userId, userMessage.content).catch(() => null);
+      if (convoId) {
+        setActiveConvoId(convoId);
+        setActiveConversationId(convoId);
+        const currentGreeting = messagesRef.current[0];
+        if (currentGreeting?.id === "greeting" && currentGreeting.content) {
+          saveConversationGreeting(convoId, currentGreeting.content);
         }
+      }
+    } else {
+      // Smart session title: update title from first real user message
+      maybeUpdateTitle(convoId, updatedMessages, userMessage.content, setConversations);
+    }
 
-        if (convoId) {
+    if (convoId) {
+      // Non-blocking background save for user message & image upload
+      (async () => {
+        try {
           let userImageUrl: string | undefined = image || undefined;
           if (userImageUrl && isDataUrl(userImageUrl)) {
             userImageUrl = await uploadDataUrlToStorage(userId, userImageUrl);
@@ -1020,11 +1021,11 @@ export default function ChatPage() {
               replyToRole: currentReply.role,
             } : {}),
           }).catch(() => {});
+        } catch (err) {
+          console.warn("[Background persistence]", err);
         }
-      } catch (err) {
-        console.warn("[Background persistence]", err);
-      }
-    })();
+      })();
+    }
 
     // Create a stable ID for the streaming assistant message
     const herMessageId = generateId();
