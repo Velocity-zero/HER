@@ -2,10 +2,13 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import AudioAura, { AuraState } from "./AudioAura";
+import type { Message } from "@/lib/types";
+import type { MicPermissionState } from "@/lib/use-speech-recognition";
 
 interface EarbudModeModalProps {
   isOpen: boolean;
   onClose: () => void;
+  messages: Message[];
   isStreaming: boolean;
   isTyping: boolean;
   onSendMessage: (text: string) => void;
@@ -14,18 +17,23 @@ interface EarbudModeModalProps {
   selectedVoice: string;
   onChangeVoice: (voice: string) => void;
   stopVoice: () => void;
+  onSpeakText?: (text: string) => void;
   getVoiceVolume: () => number;
   isListening: boolean;
   isUserSpeaking: boolean;
   userTranscript: string;
+  micPermission: MicPermissionState;
+  errorMessage: string | null;
   startListening: () => void;
   stopListening: () => void;
+  submitTranscript: () => void;
   getMicVolume: () => number;
 }
 
 export default function EarbudModeModal({
   isOpen,
   onClose,
+  messages,
   isStreaming,
   isTyping,
   onSendMessage,
@@ -34,19 +42,40 @@ export default function EarbudModeModal({
   selectedVoice,
   onChangeVoice,
   stopVoice,
+  onSpeakText,
   getVoiceVolume,
   isListening,
   isUserSpeaking,
   userTranscript,
+  micPermission,
+  errorMessage,
   startListening,
   stopListening,
+  submitTranscript,
   getMicVolume,
 }: EarbudModeModalProps) {
   const [isMuted, setIsMuted] = useState(false);
   const [showVoiceSelect, setShowVoiceSelect] = useState(false);
+  const [textInput, setTextInput] = useState("");
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+
   const prevSpeakingRef = useRef(false);
 
-  // Auto-start listening when modal opens
+  // Poll mic volume smoothly for the live UI soundwave bars (only when listening)
+  useEffect(() => {
+    if (!isOpen || !isListening || isPlayingVoice) {
+      setMicLevel(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      const vol = getMicVolume();
+      setMicLevel(vol);
+    }, 80);
+    return () => clearInterval(interval);
+  }, [isOpen, isListening, isPlayingVoice, getMicVolume]);
+
+  // Manage start/stop listening when modal opens or closes
   useEffect(() => {
     if (isOpen) {
       setIsMuted(false);
@@ -55,15 +84,15 @@ export default function EarbudModeModal({
       stopListening();
       stopVoice();
     }
-  }, [isOpen, startListening, stopListening, stopVoice]);
+  }, [isOpen]); // Keep dependencies minimal to prevent jittering loops
 
-  // When HER finishes speaking, resume listening if not muted
+  // When HER finishes speaking, resume listening automatically
   useEffect(() => {
     if (prevSpeakingRef.current && !isPlayingVoice && isOpen && !isMuted) {
       startListening();
     }
     prevSpeakingRef.current = isPlayingVoice;
-  }, [isPlayingVoice, isOpen, isMuted, startListening]);
+  }, [isPlayingVoice, isOpen, isMuted]);
 
   // Determine active aura state
   let auraState: AuraState = "idle";
@@ -75,7 +104,7 @@ export default function EarbudModeModal({
     auraState = "listening";
   }
 
-  // Handle tap anywhere to interrupt
+  // Handle tap anywhere to interrupt HER
   const handleTapToInterrupt = useCallback(() => {
     if (isPlayingVoice) {
       stopVoice();
@@ -85,7 +114,7 @@ export default function EarbudModeModal({
     }
   }, [isPlayingVoice, stopVoice, isMuted, startListening]);
 
-  // Keyboard controls: Escape to close, Space to interrupt/unmute
+  // Keyboard controls: Escape to close, Space to interrupt/unmute, Enter to send
   useEffect(() => {
     if (!isOpen) return;
 
@@ -107,12 +136,15 @@ export default function EarbudModeModal({
             stopListening();
           }
         }
+      } else if (e.key === "Enter" && userTranscript.trim() && document.activeElement?.tagName !== "INPUT") {
+        e.preventDefault();
+        submitTranscript();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, isPlayingVoice, handleTapToInterrupt, isMuted, startListening, stopListening]);
+  }, [isOpen, onClose, isPlayingVoice, handleTapToInterrupt, isMuted, startListening, stopListening, userTranscript, submitTranscript]);
 
   const toggleMute = useCallback(() => {
     if (isMuted) {
@@ -124,16 +156,29 @@ export default function EarbudModeModal({
     }
   }, [isMuted, startListening, stopListening]);
 
+  const handleManualSendText = useCallback(() => {
+    const trimmed = textInput.trim();
+    if (!trimmed) return;
+    onSendMessage(trimmed);
+    setTextInput("");
+    setShowTextInput(false);
+  }, [textInput, onSendMessage]);
+
   if (!isOpen) return null;
+
+  // Find the most recent assistant message from the ongoing text conversation
+  const recentAssistantMessage = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant" && m.content && m.content !== "(shared a photo)");
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col justify-between bg-[#F7F2EA]/95 backdrop-blur-md transition-opacity duration-500 selection:bg-her-accent/20"
+      className="fixed inset-0 z-50 flex flex-col justify-between bg-[#F7F2EA]/95 backdrop-blur-md transition-opacity duration-300 selection:bg-her-accent/20"
       onClick={handleTapToInterrupt}
     >
       {/* ── Top Bar ── */}
       <header
-        className="flex items-center justify-between px-6 py-5 sm:px-8 sm:py-6"
+        className="flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Left: Mode status badge */}
@@ -162,7 +207,7 @@ export default function EarbudModeModal({
             Earbud Mode
           </span>
           <span className="hidden sm:inline text-[11px] text-her-text-muted/40 font-light">
-            · hands-free
+            · ongoing conversation
           </span>
         </div>
 
@@ -189,7 +234,7 @@ export default function EarbudModeModal({
           </button>
 
           {showVoiceSelect && (
-            <div className="absolute right-0 top-full mt-2 w-48 rounded-2xl bg-her-surface p-1.5 shadow-xl border border-her-border/40 z-10 animate-in fade-in zoom-in-95">
+            <div className="absolute right-0 top-full mt-2 w-52 rounded-2xl bg-her-surface p-1.5 shadow-xl border border-her-border/40 z-10 animate-in fade-in zoom-in-95">
               <button
                 onClick={() => {
                   onChangeVoice("en-US-AvaMultilingualNeural");
@@ -203,7 +248,7 @@ export default function EarbudModeModal({
               >
                 <div>
                   <div className="font-medium">Ava</div>
-                  <div className="text-[10px] opacity-75">Intimate & Expressive</div>
+                  <div className="text-[10px] opacity-75">Intimate & Expressive (Neural)</div>
                 </div>
                 {selectedVoice.includes("Ava") && <span>✓</span>}
               </button>
@@ -221,7 +266,7 @@ export default function EarbudModeModal({
               >
                 <div>
                   <div className="font-medium">Jenny</div>
-                  <div className="text-[10px] opacity-75">Warm & Natural</div>
+                  <div className="text-[10px] opacity-75">Warm & Natural (Neural)</div>
                 </div>
                 {selectedVoice.includes("Jenny") && <span>✓</span>}
               </button>
@@ -247,10 +292,42 @@ export default function EarbudModeModal({
         </button>
       </header>
 
-      {/* ── Center: Visual Aura & Live Transcript ── */}
-      <main className="flex flex-1 flex-col items-center justify-center px-6">
+      {/* ── Center: Ongoing Context, Visual Aura & Live Transcript ── */}
+      <main className="flex flex-1 flex-col items-center justify-center px-4 sm:px-6">
+        {/* Ongoing Conversation Context Pill */}
+        {recentAssistantMessage && !isPlayingVoice && (
+          <div
+            className="mb-2 max-w-md w-full animate-in fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-her-surface/50 px-3.5 py-2 border border-her-border/25 shadow-[0_1px_4px_rgba(180,140,110,0.04)]">
+              <div className="min-w-0 flex-1">
+                <span className="block text-[9px] uppercase tracking-[0.14em] font-semibold text-her-accent/70">
+                  last from her
+                </span>
+                <p className="truncate text-xs text-her-text-muted/80 italic">
+                  “{recentAssistantMessage.content}”
+                </p>
+              </div>
+              {onSpeakText && (
+                <button
+                  type="button"
+                  onClick={() => onSpeakText(recentAssistantMessage.content)}
+                  className="shrink-0 flex items-center gap-1 rounded-full bg-her-accent/10 px-2.5 py-1 text-[10px] font-medium text-her-accent hover:bg-her-accent/20 transition-all active:scale-95"
+                  title="Replay HER's last message"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-2.5 w-2.5">
+                    <path d="M3 3.732a1.5 1.5 0 0 1 2.305-1.265l6.706 4.267a1.5 1.5 0 0 1 0 2.531l-6.706 4.268A1.5 1.5 0 0 1 3 12.267V3.732Z" />
+                  </svg>
+                  <span>listen</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Glowing Ambient Aura */}
-        <div className="relative my-4 cursor-pointer">
+        <div className="relative my-2 sm:my-4 cursor-pointer">
           <AudioAura
             state={auraState}
             getAudioVolume={getVoiceVolume}
@@ -259,42 +336,114 @@ export default function EarbudModeModal({
           />
         </div>
 
-        {/* Subtitle / Status indicator */}
-        <div className="mt-4 flex flex-col items-center text-center max-w-lg min-h-[110px]">
-          {/* Status Label */}
-          <div className="mb-2 text-[11px] font-medium tracking-[0.2em] uppercase text-her-accent/80 transition-all">
-            {isPlayingVoice
-              ? "HER is speaking"
-              : isTyping || isStreaming
-              ? "thinking…"
-              : isUserSpeaking
-              ? "listening to you…"
-              : isMuted
-              ? "mic paused"
-              : isListening
-              ? "listening · say anything"
-              : "tap mic to speak"}
+        {/* Permission Warning Notice (if blocked) */}
+        {micPermission === "denied" && (
+          <div
+            className="my-2 max-w-sm rounded-xl bg-amber-50 border border-amber-200/80 p-3 text-center text-xs text-amber-800 animate-in fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-medium">Microphone permission blocked</p>
+            <p className="text-[11px] text-amber-700/80 mt-0.5">
+              Please click the lock/settings icon in your browser address bar and allow microphone access.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowTextInput(true)}
+              className="mt-2 inline-flex items-center gap-1 rounded-full bg-amber-200/70 px-3 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-200 transition-colors"
+            >
+              ⌨️ type a message instead
+            </button>
+          </div>
+        )}
+
+        {/* Unsupported Notice (if browser has no SpeechRecognition) */}
+        {micPermission === "unsupported" && (
+          <div
+            className="my-2 max-w-sm rounded-xl bg-her-surface border border-her-border/40 p-3 text-center text-xs text-her-text-muted animate-in fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="font-medium text-her-text">Browser speech not available</p>
+            <p className="text-[11px] mt-0.5">
+              Voice recognition works best on Chrome or Edge.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowTextInput(true)}
+              className="mt-2 inline-flex items-center gap-1 rounded-full bg-her-accent/15 px-3 py-1 text-[11px] font-medium text-her-accent hover:bg-her-accent/25 transition-colors"
+            >
+              ⌨️ type a message instead
+            </button>
+          </div>
+        )}
+
+        {/* Live Status and Soundwave Level Indicator */}
+        <div className="mt-2 flex flex-col items-center text-center max-w-lg min-h-[105px]">
+          {/* Status Label + Reactive Waveform Bars */}
+          <div className="mb-2 flex items-center justify-center gap-2">
+            <span className="text-[11px] font-medium tracking-[0.2em] uppercase text-her-accent/80 transition-all">
+              {isPlayingVoice
+                ? "HER is speaking"
+                : isTyping || isStreaming
+                ? "thinking…"
+                : isUserSpeaking
+                ? "hearing you speak…"
+                : isMuted
+                ? "mic muted"
+                : isListening
+                ? "listening to you"
+                : "mic standby"}
+            </span>
+
+            {/* Soundwave animation bars (moving to mic volume) */}
+            {isListening && !isPlayingVoice && !isMuted && (
+              <div className="flex items-center gap-0.5 h-3 ml-1">
+                {[0.4, 0.8, 1.2, 0.7, 0.5].map((scale, i) => (
+                  <span
+                    key={i}
+                    className="w-[2px] rounded-full bg-emerald-500/80 transition-all duration-75"
+                    style={{
+                      height: `${Math.max(3, (micLevel * 18 * scale) + (isUserSpeaking ? 4 : 1))}px`,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Transcript / Spoken Text Display */}
-          <div className="text-base sm:text-lg font-light leading-relaxed text-her-text/85 transition-opacity duration-300">
+          <div className="text-base sm:text-lg font-light leading-relaxed text-her-text/85 transition-opacity duration-200">
             {isPlayingVoice ? (
               <p className="animate-in fade-in italic">
                 “{currentVoiceSentence}”
               </p>
-            ) : isUserSpeaking && userTranscript ? (
-              <p className="text-her-text/70 animate-in fade-in">
-                {userTranscript}
-              </p>
-            ) : !isListening && !isMuted ? (
+            ) : userTranscript ? (
+              <div className="animate-in fade-in flex flex-col items-center gap-2">
+                <p className="text-her-text font-normal">
+                  “{userTranscript}”
+                </p>
+                {/* Instant Send Button (no need to wait for 1.5s silence) */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    submitTranscript();
+                  }}
+                  className="rounded-full bg-her-accent px-4 py-1.5 text-xs text-white shadow-sm hover:bg-her-accent-hover active:scale-95 transition-all"
+                >
+                  Send Now ↵
+                </button>
+              </div>
+            ) : isListening && !isMuted ? (
               <p className="text-her-text-muted/50 text-sm font-normal">
-                tap the microphone button below to start voice
+                speak freely. your reply continues this conversation naturally.
+              </p>
+            ) : isMuted ? (
+              <p className="text-her-text-muted/40 text-sm font-normal">
+                mic is paused. tap the mic button below or press Space to resume.
               </p>
             ) : (
-              <p className="text-her-text-muted/40 text-sm font-normal">
-                {isMuted
-                  ? "tap mic button below or press Space to unmute"
-                  : "speak naturally. HER replies automatically."}
+              <p className="text-her-text-muted/50 text-sm font-normal">
+                tap the mic button below to start talking
               </p>
             )}
           </div>
@@ -303,16 +452,51 @@ export default function EarbudModeModal({
 
       {/* ── Bottom Controls ── */}
       <footer
-        className="flex flex-col items-center justify-center pb-8 pt-4 px-6 sm:pb-10"
+        className="flex flex-col items-center justify-center pb-6 pt-2 px-6 sm:pb-8 w-full max-w-lg mx-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-6">
+        {/* Optional Whisper Text Field for noisy environments */}
+        {showTextInput && (
+          <div
+            className="mb-4 w-full animate-in fade-in slide-in-from-bottom-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 rounded-full border border-her-border/45 bg-her-composer px-4 py-2 shadow-md">
+              <input
+                type="text"
+                value={textInput}
+                onChange={(e) => setTextInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleManualSendText();
+                  }
+                }}
+                placeholder="type to reply hands-free…"
+                className="flex-1 bg-transparent text-xs sm:text-sm text-her-text outline-none placeholder:text-her-text-muted/40"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={handleManualSendText}
+                disabled={!textInput.trim()}
+                className="rounded-full bg-her-accent px-3.5 py-1 text-xs font-medium text-white shadow-sm hover:bg-her-accent-hover transition-all disabled:opacity-30"
+              >
+                send
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-5">
           {/* Mic Mute / Unmute Button */}
           <button
             onClick={toggleMute}
             className={`flex h-12 w-12 items-center justify-center rounded-full transition-all duration-300 shadow-sm active:scale-95 ${
               isMuted
                 ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
+                : isListening
+                ? "bg-emerald-500 text-white shadow-emerald-500/20 shadow-md hover:bg-emerald-600"
                 : "bg-her-surface text-her-text hover:bg-her-surface-light"
             }`}
             title={isMuted ? "Unmute microphone (Space)" : "Mute microphone (Space)"}
@@ -342,13 +526,32 @@ export default function EarbudModeModal({
               <span>tap to interrupt</span>
             </button>
           )}
+
+          {/* Toggle Whisper text input button */}
+          <button
+            onClick={() => setShowTextInput((prev) => !prev)}
+            className={`flex h-10 w-10 items-center justify-center rounded-full text-her-text-muted/50 transition-all hover:bg-her-surface hover:text-her-text active:scale-95 ${
+              showTextInput ? "bg-her-accent/15 text-her-accent" : ""
+            }`}
+            title="Type a message instead"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+              <path d="M2 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6.414l-2.707 2.707A1 1 0 0 1 2 16V5z" />
+            </svg>
+          </button>
         </div>
 
         {/* Tip */}
-        <p className="mt-3 text-[11px] text-her-text-muted/40 font-light">
-          {isPlayingVoice ? "tap anywhere to pause HER" : "tap outside or press Esc to return to text"}
+        <p className="mt-2.5 text-[11px] text-her-text-muted/40 font-light">
+          {isPlayingVoice
+            ? "tap anywhere to pause HER"
+            : isListening
+            ? "speak your thoughts · HER replies automatically"
+            : "tap mic to start"}
         </p>
       </footer>
     </div>
+  );
+}
   );
 }

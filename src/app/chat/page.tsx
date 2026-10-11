@@ -537,6 +537,11 @@ export default function ChatPage() {
   const speechRecRef = useRef(speechRec);
   speechRecRef.current = speechRec;
 
+  const toggleEarbud = useCallback(() => {
+    voicePlayer.unlockAudio();
+    setEarbudOpen((prev) => !prev);
+  }, [voicePlayer]);
+
   /**
    * Fire-and-forget: extract memories from a set of messages and refresh context.
    * Uses a ref-stable function so it can be called from any callback without
@@ -1981,7 +1986,7 @@ export default function ChatPage() {
         onClear={handleClear}
         onHistoryOpen={openHistory}
         onSignInClick={openAuth}
-        onEarbudOpen={() => setEarbudOpen((prev) => !prev)}
+        onEarbudOpen={toggleEarbud}
         isEarbudActive={earbudOpen}
         accessToken={accessTokenRef.current}
       />
@@ -2160,7 +2165,7 @@ export default function ChatPage() {
         onPrefillConsumed={consumePrefill}
         onToggleStudio={toggleStudio}
         studioOpen={studioOpen}
-        onToggleEarbud={() => setEarbudOpen((prev) => !prev)}
+        onToggleEarbud={toggleEarbud}
         earbudActive={earbudOpen}
         replyingTo={replyingTo}
         onCancelReply={cancelReply}
@@ -2170,6 +2175,7 @@ export default function ChatPage() {
       <EarbudModeModal
         isOpen={earbudOpen}
         onClose={() => setEarbudOpen(false)}
+        messages={messages}
         isStreaming={isStreaming}
         isTyping={isTyping}
         onSendMessage={(text) => handleSend(text)}
@@ -2178,12 +2184,16 @@ export default function ChatPage() {
         selectedVoice={voicePlayer.selectedVoice}
         onChangeVoice={voicePlayer.setSelectedVoice}
         stopVoice={voicePlayer.stopSpeaking}
+        onSpeakText={(text) => handleSpeakMessage("replay", text)}
         getVoiceVolume={voicePlayer.getVolume}
         isListening={speechRec.isListening}
         isUserSpeaking={speechRec.isUserSpeaking}
         userTranscript={speechRec.transcript}
+        micPermission={speechRec.micPermission}
+        errorMessage={speechRec.errorMessage}
         startListening={speechRec.startListening}
         stopListening={speechRec.stopListening}
+        submitTranscript={speechRec.submitTranscript}
         getMicVolume={speechRec.getMicVolume}
       />
     </div>

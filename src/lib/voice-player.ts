@@ -45,7 +45,7 @@ export class VoicePlayer {
     this.options = { ...this.options, ...options };
   }
 
-  private initAudioContext(): AudioContext {
+  public initAudioContext(): AudioContext {
     if (!this.audioCtx || this.audioCtx.state === "closed") {
       const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.audioCtx = new AudioCtxClass();
@@ -59,6 +59,16 @@ export class VoicePlayer {
       this.audioCtx.resume().catch(() => {});
     }
     return this.audioCtx;
+  }
+
+  /**
+   * Explicitly unlock/resume AudioContext on a user click/gesture.
+   */
+  public async unlockAudio(): Promise<void> {
+    const ctx = this.initAudioContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => {});
+    }
   }
 
   /**
@@ -110,8 +120,8 @@ export class VoicePlayer {
 
       const arrayBuffer = await res.arrayBuffer();
       const ctx = this.initAudioContext();
-      // Decode audio data safely
-      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      // Use slice to avoid detaching buffer issues on WebKit
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
       return audioBuffer;
     } catch (err: unknown) {
       if ((err as Error)?.name === "AbortError") {
@@ -171,9 +181,13 @@ export class VoicePlayer {
   /**
    * Plays a single Web Audio buffer to completion.
    */
-  private playBuffer(buffer: AudioBuffer): Promise<void> {
+  private async playBuffer(buffer: AudioBuffer): Promise<void> {
+    const ctx = this.initAudioContext();
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => {});
+    }
+
     return new Promise((resolve) => {
-      const ctx = this.initAudioContext();
       if (!this.analyser) {
         resolve();
         return;

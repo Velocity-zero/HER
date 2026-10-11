@@ -109,6 +109,13 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
     return playerRef.current?.getFrequencyData() || null;
   }, []);
 
+  /**
+   * Unlock AudioContext on user gesture.
+   */
+  const unlockAudio = useCallback(() => {
+    playerRef.current?.unlockAudio();
+  }, []);
+
   return {
     isPlaying,
     currentSentence,
@@ -118,6 +125,7 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
     finishFeeding,
     speakText,
     stopSpeaking,
+    unlockAudio,
     getVolume,
     getFrequencyData,
   };

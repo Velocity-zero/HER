@@ -23,6 +23,16 @@ export default function AudioAura({
   const animFrameRef = useRef<number | null>(null);
   const smoothedVolumeRef = useRef(0);
 
+  // Store volatile callbacks & state in refs to prevent canvas resizing & jitter
+  const stateRef = useRef<AuraState>(state);
+  stateRef.current = state;
+
+  const getAudioVolumeRef = useRef(getAudioVolume);
+  getAudioVolumeRef.current = getAudioVolume;
+
+  const getMicVolumeRef = useRef(getMicVolume);
+  getMicVolumeRef.current = getMicVolume;
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -32,31 +42,33 @@ export default function AudioAura({
 
     let time = 0;
     const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    // Set canvas dimension once, never in a per-frame or per-prop re-run
     canvas.width = size * dpr;
     canvas.height = size * dpr;
 
     const render = () => {
       time += 0.025;
+      const currentState = stateRef.current;
 
-      // Read active volume depending on state
+      // Read active volume depending on current state
       let targetVolume = 0;
-      if (state === "speaking" && getAudioVolume) {
-        targetVolume = getAudioVolume();
-      } else if (state === "listening" && getMicVolume) {
-        targetVolume = getMicVolume();
-      } else if (state === "thinking") {
+      if (currentState === "speaking" && getAudioVolumeRef.current) {
+        targetVolume = getAudioVolumeRef.current();
+      } else if (currentState === "listening" && getMicVolumeRef.current) {
+        targetVolume = getMicVolumeRef.current();
+      } else if (currentState === "thinking") {
         targetVolume = 0.35 + Math.sin(time * 3) * 0.15;
       }
 
-      // Smooth volume interpolation for liquid fluidity
-      smoothedVolumeRef.current += (targetVolume - smoothedVolumeRef.current) * 0.22;
+      // Smooth volume interpolation for liquid fluidity (never jittery)
+      smoothedVolumeRef.current += (targetVolume - smoothedVolumeRef.current) * 0.18;
       const vol = smoothedVolumeRef.current;
 
       const width = canvas.width;
       const height = canvas.height;
       const centerX = width / 2;
       const centerY = height / 2;
-      const baseRadius = (size * dpr * 0.28);
+      const baseRadius = size * dpr * 0.28;
 
       ctx.clearRect(0, 0, width, height);
 
@@ -65,11 +77,11 @@ export default function AudioAura({
       let secondaryColor = "rgba(232, 156, 131, "; // Warm peach
       let coreColor = "rgba(255, 245, 238, "; // Luminous white-warmth
 
-      if (state === "thinking") {
+      if (currentState === "thinking") {
         primaryColor = "rgba(217, 131, 78, "; // Warm amber
         secondaryColor = "rgba(244, 180, 120, ";
         coreColor = "rgba(255, 248, 235, ";
-      } else if (state === "speaking") {
+      } else if (currentState === "speaking") {
         primaryColor = "rgba(209, 90, 70, "; // Vivid crimson-coral
         secondaryColor = "rgba(247, 160, 114, ";
         coreColor = "rgba(255, 250, 245, ";
@@ -163,7 +175,7 @@ export default function AudioAura({
         cancelAnimationFrame(animFrameRef.current);
       }
     };
-  }, [state, getAudioVolume, getMicVolume, size]);
+  }, [size]);
 
   return (
     <div
