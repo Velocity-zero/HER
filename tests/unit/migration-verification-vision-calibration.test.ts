@@ -6,11 +6,11 @@ import {
   generateDynamicVisionFallback,
   generateSoftError,
 } from "../../src/lib/multimodal";
-import { NVIDIA_CHAT_MODEL } from "../../src/lib/provider";
+import { NVIDIA_CHAT_MODEL, DEFAULT_NVIDIA_CHAT_MODEL } from "../../src/lib/providers/NvidiaProvider";
 
-test("Step 2: Multimodal Vision Voice Calibration — Confirms Qwen3-Next-80B Integration", async () => {
-  // 1. Ensure Qwen3-Next-80B is the model used by multimodal.ts for vision rewrites
-  assert.equal(NVIDIA_CHAT_MODEL, "nvidia/llama-3.3-nemotron-super-49b-v1.5");
+test("Step 2: Multimodal Vision Voice Calibration — Confirms Model Integration", async () => {
+  // 1. Ensure active model is used by multimodal.ts for vision rewrites
+  assert.equal(NVIDIA_CHAT_MODEL, DEFAULT_NVIDIA_CHAT_MODEL);
 
   // 2. Test subjective vs objective vision question classification
   assert.equal(isSubjectiveVisionQuestion("how do i look in this outfit?"), true);

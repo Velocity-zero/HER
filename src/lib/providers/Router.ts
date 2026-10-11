@@ -85,8 +85,26 @@ export class LLMRouter {
    * Returns primary and secondary fallback providers based on PRIMARY_PROVIDER env var
    */
   public resolveProviderChain(): { primary: ChatProvider; fallback: ChatProvider } {
-    const primaryName = (process.env.PRIMARY_PROVIDER || "opencode").toLowerCase();
-    const primary = this.providers.get(primaryName) || this.providers.get("opencode") || Array.from(this.providers.values())[0];
+    const rawPrimary = (process.env.PRIMARY_PROVIDER || "").toLowerCase().trim();
+    const hasNvidiaKey = Boolean(
+      (process.env.NVIDIA_API_KEY || process.env.NVIDIA_CHAT_API_KEY) &&
+      !process.env.NVIDIA_API_KEY?.startsWith("your_")
+    );
+    const hasOpenCodeKey = Boolean(
+      (process.env.OPENCODE_ZEN_API_KEY || process.env.OPENCODE_ZEN_KEY) &&
+      !process.env.OPENCODE_ZEN_API_KEY?.startsWith("your_")
+    );
+
+    let primaryName = rawPrimary;
+    if (!primaryName) {
+      if (hasNvidiaKey && !hasOpenCodeKey) {
+        primaryName = "nvidia";
+      } else {
+        primaryName = "opencode";
+      }
+    }
+
+    const primary = this.providers.get(primaryName) || this.providers.get("nvidia") || Array.from(this.providers.values())[0];
 
     let fallbackName = primary.providerName.toLowerCase() === "opencode" ? "nvidia" : "opencode";
     if (!this.providers.has(fallbackName) || fallbackName === primary.providerName.toLowerCase()) {

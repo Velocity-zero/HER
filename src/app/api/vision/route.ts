@@ -22,7 +22,8 @@ import { validateApiRequest, checkBodySize } from "@/lib/api-auth";
 
 const NVIDIA_VISION_URL =
   "https://integrate.api.nvidia.com/v1/chat/completions";
-const NVIDIA_VISION_MODEL = "google/gemma-3-27b-it";
+const NVIDIA_VISION_MODEL =
+  process.env.NVIDIA_VISION_MODEL || "meta/llama-3.2-11b-vision-instruct";
 
 const DEFAULT_PROMPT = "Describe this image.";
 
@@ -64,10 +65,13 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Validate API key ──
-    const apiKey = process.env.NVIDIA_VISION_API_KEY;
-    if (!apiKey || apiKey === "your_vision_key_here") {
+    const apiKey =
+      process.env.NVIDIA_VISION_API_KEY ||
+      process.env.NVIDIA_API_KEY ||
+      process.env.NVIDIA_CHAT_API_KEY;
+    if (!apiKey || apiKey.startsWith("your_")) {
       return NextResponse.json(
-        { error: "Missing NVIDIA_VISION_API_KEY" },
+        { error: "Missing NVIDIA_API_KEY for vision" },
         { status: 500 }
       );
     }

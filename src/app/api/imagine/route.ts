@@ -195,6 +195,8 @@ export interface GenerateImageOptions {
    * to avoid a redundant ~300–500ms LLM call per attempt.
    */
   skipEnhancement?: boolean;
+  /** Internal flag to avoid infinite recursion on failover */
+  skipFallback?: boolean;
 }
 
 export interface GenerateImageResult {
@@ -402,6 +404,13 @@ export async function generateImageCore(
     }
 
     const prefix = model.mode === "edit" ? "Image edit" : "Image generation";
+
+    // ── Auto-failover to alternative creation model on endpoint outage ──
+    if (model.mode === "create" && (res.status === 404 || res.status === 503 || res.status === 502 || res.status === 500) && !opts.skipFallback) {
+      const fallbackModelId = model.id === "flux-2-klein-4b" ? "flux-1-dev" : "flux-2-klein-4b";
+      console.warn(`[HER Imagine] Primary model ${model.id} failed (${res.status}). Auto-falling back to ${fallbackModelId}...`);
+      return generateImageCore({ ...opts, modelId: fallbackModelId, skipFallback: true });
+    }
 
     if (res.status === 429) {
       return { image: null, error: `${prefix} rate limited — try again in about 30 seconds.`, status: 429 };

@@ -178,7 +178,7 @@ export const IMAGE_MODELS: ImageModelDef[] = [
 // ── Helpers ────────────────────────────────────────────────
 
 /** Default model for the "create" mode */
-export const DEFAULT_CREATE_MODEL_ID = "flux-1-dev";
+export const DEFAULT_CREATE_MODEL_ID = "flux-2-klein-4b";
 
 /** Default model for the "edit" mode */
 export const DEFAULT_EDIT_MODEL_ID = "flux-1-kontext-dev";
@@ -330,10 +330,16 @@ export function resolveApiKey(model: ImageModelDef): string | null {
     return specific;
   }
 
-  // 2. Fallback to shared key
+  // 2. Fallback to shared image key
   const shared = process.env.NVIDIA_IMAGE_API_KEY;
   if (shared && shared.length > 0 && !shared.startsWith("your_")) {
     return shared;
+  }
+
+  // 3. Fallback to unified master key
+  const master = process.env.NVIDIA_API_KEY || process.env.NVIDIA_CHAT_API_KEY;
+  if (master && master.length > 0 && !master.startsWith("your_")) {
+    return master;
   }
 
   return null;

@@ -29,10 +29,14 @@ export async function nvidiaChat(
   messages: { role: "system" | "user" | "assistant"; content: string }[],
   options: { maxTokens?: number; temperature?: number; topP?: number } = {}
 ): Promise<string> {
-  const apiKey = process.env.NVIDIA_CHAT_API_KEY;
-  if (!apiKey || apiKey === "your_chat_key_here") {
-    throw new Error("Missing NVIDIA_CHAT_API_KEY");
+  const apiKey =
+    process.env.NVIDIA_API_KEY ||
+    process.env.NVIDIA_CHAT_API_KEY;
+  if (!apiKey || apiKey.startsWith("your_")) {
+    throw new Error("Missing NVIDIA_API_KEY");
   }
+
+  const modelToUse = process.env.NVIDIA_CHAT_MODEL || NVIDIA_CHAT_MODEL;
 
   const res = await fetch(NVIDIA_CHAT_URL, {
     method: "POST",
@@ -41,7 +45,7 @@ export async function nvidiaChat(
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: NVIDIA_CHAT_MODEL,
+      model: modelToUse,
       messages,
       max_tokens: options.maxTokens ?? 1024,
       temperature: options.temperature ?? 0.7,

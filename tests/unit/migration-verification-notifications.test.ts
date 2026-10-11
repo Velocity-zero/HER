@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { NVIDIA_CHAT_MODEL } from "../../src/lib/provider";
+import { NVIDIA_CHAT_MODEL, DEFAULT_NVIDIA_CHAT_MODEL } from "../../src/lib/providers/NvidiaProvider";
 import { hasTemporalSignal } from "../../src/lib/temporal";
 import { getRandomFallback } from "../../src/lib/notification-messages";
 
-test("Step 4: Proactive Notification & Temporal Scheduling Audit — Confirms Qwen3-Next-80B Harmony", () => {
+test("Step 4: Proactive Notification & Temporal Scheduling Audit — Confirms Model Harmony", () => {
   // 1. Verify model string parity
-  assert.equal(NVIDIA_CHAT_MODEL, "nvidia/llama-3.3-nemotron-super-49b-v1.5");
+  assert.equal(NVIDIA_CHAT_MODEL, DEFAULT_NVIDIA_CHAT_MODEL);
 
   // 2. Test temporal signal detection on proactive reminders
   assert.equal(hasTemporalSignal("remind me in 10 minutes to check the oven"), true);

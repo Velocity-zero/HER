@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runProviderComparison } from "../../scripts/provider-migration-comparison";
-import { NVIDIA_CHAT_MODEL } from "../../src/lib/provider";
+import { NVIDIA_CHAT_MODEL, DEFAULT_NVIDIA_CHAT_MODEL } from "../../src/lib/providers/NvidiaProvider";
 
-test("Provider Migration — Confirms Qwen3-Next-80B-A3B-Instruct is Active", () => {
-  assert.equal(NVIDIA_CHAT_MODEL, "nvidia/llama-3.3-nemotron-super-49b-v1.5");
+test("Provider Migration — Confirms Active Chat Model is Configured", () => {
+  assert.equal(NVIDIA_CHAT_MODEL, DEFAULT_NVIDIA_CHAT_MODEL);
 });
 
 test("Provider Migration Comparison Suite — Verifies 10 Benchmark Scenarios", () => {

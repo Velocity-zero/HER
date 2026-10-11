@@ -194,9 +194,13 @@ export async function POST(req: NextRequest) {
     );
 
     // ── Pre-check provider API key before stream/request execution ──
-    const chatApiKey = process.env.NVIDIA_CHAT_API_KEY || process.env.NVIDIA_API_KEY;
-    if (!chatApiKey || chatApiKey === "your_chat_key_here" || chatApiKey === "your_image_key_here") {
-      const missingKeyMsg = "Missing NVIDIA_CHAT_API_KEY. Add it to your .env.local file.";
+    const chatApiKey =
+      process.env.NVIDIA_API_KEY ||
+      process.env.NVIDIA_CHAT_API_KEY ||
+      process.env.OPENCODE_ZEN_API_KEY ||
+      process.env.OPENCODE_ZEN_KEY;
+    if (!chatApiKey || chatApiKey.startsWith("your_")) {
+      const missingKeyMsg = "Missing API key. Set NVIDIA_API_KEY in your environment.";
       console.error("[HER API] Key error:", missingKeyMsg);
       if (wantsStream) {
         return new Response(missingKeyMsg, { status: 500 });
