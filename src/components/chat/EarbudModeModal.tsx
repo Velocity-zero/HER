@@ -488,50 +488,73 @@ export default function EarbudModeModal({
           </div>
         )}
 
-        <div className="flex items-center gap-5">
-          {/* Mic Mute / Unmute Button */}
+        <div className="flex items-center gap-6">
+          {/* Main Microphone Button */}
           <button
-            onClick={toggleMute}
-            className={`flex h-12 w-12 items-center justify-center rounded-full transition-all duration-300 shadow-sm active:scale-95 ${
-              isMuted
-                ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (isPlayingVoice) {
+                handleTapToInterrupt();
+              } else if (userTranscript.trim()) {
+                submitTranscript();
+              } else if (isListening) {
+                toggleMute();
+              } else {
+                startListening();
+              }
+            }}
+            className={`relative flex h-16 w-16 items-center justify-center rounded-full transition-all duration-300 shadow-lg active:scale-90 ${
+              isPlayingVoice
+                ? "bg-her-accent text-white shadow-her-accent/30 ring-4 ring-her-accent/20"
+                : isUserSpeaking
+                ? "bg-her-accent text-white shadow-her-accent/40 ring-4 ring-her-accent/30 animate-pulse"
                 : isListening
-                ? "bg-emerald-500 text-white shadow-emerald-500/20 shadow-md hover:bg-emerald-600"
-                : "bg-her-surface text-her-text hover:bg-her-surface-light"
+                ? "bg-emerald-500 text-white shadow-emerald-500/30 ring-4 ring-emerald-500/20"
+                : "bg-her-surface border border-her-border/40 text-her-text hover:bg-her-surface-light"
             }`}
-            title={isMuted ? "Unmute microphone (Space)" : "Mute microphone (Space)"}
+            title={
+              isPlayingVoice
+                ? "Interrupt HER"
+                : userTranscript.trim()
+                ? "Send spoken message now"
+                : isListening
+                ? "Listening... Tap to finish or pause"
+                : "Tap to start listening"
+            }
           >
-            {isMuted ? (
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-                <path d="M10 2a3 3 0 00-3 3v4.293l4.854 4.853A3 3 0 0013 9.293V5a3 3 0 00-3-3zM4.22 3.22a.75.75 0 00-1.06 1.06l13.5 13.5a.75.75 0 101.06-1.06L4.22 3.22zM8.5 13.793l1.5 1.5V17h-2a.75.75 0 000 1.5h4a.75.75 0 000-1.5h-2v-1.707l.793-.793A4.5 4.5 0 015.5 10a.75.75 0 00-1.5 0 6 6 0 005.25 5.95v-2.157z" />
+            {isListening && (
+              <span className="absolute -inset-1 rounded-full border border-emerald-500/40 animate-ping pointer-events-none opacity-40" />
+            )}
+            {isPlayingVoice ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-6 w-6">
+                <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z" />
               </svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+            ) : userTranscript.trim() ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-6 w-6">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+              </svg>
+            ) : isListening ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-6 w-6">
                 <path d="M10 2a3 3 0 00-3 3v5a3 3 0 006 0V5a3 3 0 00-3-3z" />
                 <path d="M5.5 9.5a.75.75 0 00-1.5 0 6 6 0 005.25 5.95V17h-2a.75.75 0 000 1.5h5.5a.75.75 0 000-1.5h-2v-1.55A6 6 0 0016 9.5a.75.75 0 00-1.5 0 4.5 4.5 0 01-9 0z" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-6 w-6 opacity-70">
+                <path d="M10 2a3 3 0 00-3 3v4.293l4.854 4.853A3 3 0 0013 9.293V5a3 3 0 00-3-3zM4.22 3.22a.75.75 0 00-1.06 1.06l13.5 13.5a.75.75 0 101.06-1.06L4.22 3.22zM8.5 13.793l1.5 1.5V17h-2a.75.75 0 000 1.5h4a.75.75 0 000-1.5h-2v-1.707l.793-.793A4.5 4.5 0 015.5 10a.75.75 0 00-1.5 0 6 6 0 005.25 5.95v-2.157z" />
               </svg>
             )}
           </button>
 
-          {/* Interrupt Button (Visible when HER is speaking) */}
-          {isPlayingVoice && (
-            <button
-              onClick={handleTapToInterrupt}
-              className="flex items-center gap-2 rounded-full bg-her-accent/15 px-4 py-2.5 text-xs font-medium text-her-accent transition-all hover:bg-her-accent/25 active:scale-95 animate-in fade-in"
-              title="Interrupt HER and speak"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                <path d="M5.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75A.75.75 0 007.25 3h-1.5zM12.75 3a.75.75 0 00-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 00.75-.75V3.75a.75.75 0 00-.75-.75h-1.5z" />
-              </svg>
-              <span>tap to interrupt</span>
-            </button>
-          )}
-
           {/* Toggle Whisper text input button */}
           <button
-            onClick={() => setShowTextInput((prev) => !prev)}
-            className={`flex h-10 w-10 items-center justify-center rounded-full text-her-text-muted/50 transition-all hover:bg-her-surface hover:text-her-text active:scale-95 ${
-              showTextInput ? "bg-her-accent/15 text-her-accent" : ""
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowTextInput((prev) => !prev);
+            }}
+            className={`flex h-11 w-11 items-center justify-center rounded-full text-her-text-muted/60 transition-all hover:bg-her-surface hover:text-her-text active:scale-95 ${
+              showTextInput ? "bg-her-accent/15 text-her-accent ring-2 ring-her-accent/20" : "bg-her-surface/70 border border-her-border/30"
             }`}
             title="Type a message instead"
           >
@@ -541,17 +564,17 @@ export default function EarbudModeModal({
           </button>
         </div>
 
-        {/* Tip */}
-        <p className="mt-2.5 text-[11px] text-her-text-muted/40 font-light">
+        {/* Dynamic Status / Helper Tip */}
+        <p className="mt-3 text-[11px] text-her-text-muted/60 font-light text-center">
           {isPlayingVoice
-            ? "tap anywhere to pause HER"
+            ? "HER is speaking · tap anywhere to interrupt"
+            : userTranscript.trim()
+            ? "tap the button to send now"
             : isListening
-            ? "speak your thoughts · HER replies automatically"
-            : "tap mic to start"}
+            ? "listening · speak naturally or tap to pause"
+            : "tap mic to start speaking"}
         </p>
       </footer>
     </div>
-  );
-}
   );
 }
