@@ -54,6 +54,12 @@ interface MessageBubbleProps {
   onEdit?: (messageId: string, newContent: string) => void;
   /** Called when user soft-deletes their own message — only applies to role="user" */
   onDelete?: (messageId: string) => void;
+  /** Called to speak/play this message using Edge Neural TTS */
+  onSpeak?: (text: string) => void;
+  /** Whether this message is currently being spoken/played */
+  isSpeaking?: boolean;
+  /** Called to stop playback */
+  onStopSpeak?: () => void;
 }
 
 /** Truncate text for quote preview */
@@ -68,7 +74,21 @@ const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "🔥", "👏"];
 /** Long-press duration in ms to trigger emoji tray on mobile */
 const LONG_PRESS_MS = 400;
 
-function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStreaming = false, imageActions, thinkingLabel, onReply, onReaction, onEdit, onDelete }: MessageBubbleProps) {
+function MessageBubbleInner({
+  message,
+  showTimestamp = false,
+  index = 0,
+  isStreaming = false,
+  imageActions,
+  thinkingLabel,
+  onReply,
+  onReaction,
+  onEdit,
+  onDelete,
+  onSpeak,
+  isSpeaking = false,
+  onStopSpeak,
+}: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isDeleted = !!message.is_deleted;
   const hasImage = !!message.image;
@@ -687,6 +707,27 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
             >
               {copied ? "✓" : "copy"}
             </button>
+            {/* Listen / Speak — assistant messages only (mobile) */}
+            {!isUser && onSpeak && hasText && !isDeleted && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEmojiTray(false);
+                  if (isSpeaking) {
+                    onStopSpeak?.();
+                  } else {
+                    onSpeak(message.content);
+                  }
+                }}
+                className={`flex h-8 min-w-[40px] items-center justify-center rounded-full px-2 text-[10px] tracking-[0.03em] transition-all duration-150 active:scale-[0.85] hover:bg-her-surface/60 sm:hidden ${
+                  isSpeaking ? "bg-her-accent/15 text-her-accent font-medium" : "text-her-text-muted/50"
+                }`}
+                aria-label={isSpeaking ? "Stop" : "Listen"}
+              >
+                {isSpeaking ? "stop" : "listen"}
+              </button>
+            )}
             {/* Edit — user messages only (mobile) */}
             {canEdit && (
               <button
@@ -790,19 +831,58 @@ function MessageBubbleInner({ message, showTimestamp = false, index = 0, isStrea
         </div>
       )}
 
-      {/* Desktop action row for HER messages — reply button, appears on hover */}
-      {!isUser && canReply && showReplyBtn && !showEmojiTray && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onReply!(message); setShowReplyBtn(false); }}
-          className={`animate-fade-in mt-1 hidden items-center gap-1 rounded-full px-2.5 py-1 text-[10px] tracking-[0.03em] text-her-text-muted/35 transition-all duration-200 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.94] sm:flex self-start ml-1`}
-          aria-label="Reply to this message"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 -scale-x-100">
-            <path d="M1.75 1.002a.75.75 0 1 0 0 1.5h6.5a3.75 3.75 0 0 1 0 7.5h-3.44l1.72-1.72a.75.75 0 0 0-1.06-1.06l-3 3a.75.75 0 0 0 0 1.06l3 3a.75.75 0 1 0 1.06-1.06l-1.72-1.72h3.44a5.25 5.25 0 0 0 0-10.5h-6.5Z" />
-          </svg>
-          reply
-        </button>
+      {/* Desktop action row for HER messages — reply and listen buttons, appears on hover */}
+      {!isUser && !showEmojiTray && (
+        <div className="animate-fade-in mt-1 hidden items-center gap-1 sm:flex self-start ml-1">
+          {onSpeak && hasText && !isStreaming && !isDeleted && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isSpeaking) {
+                  onStopSpeak?.();
+                } else {
+                  onSpeak(message.content);
+                }
+              }}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] tracking-[0.03em] transition-all duration-200 active:scale-[0.94] ${
+                isSpeaking
+                  ? "bg-her-accent/15 text-her-accent font-medium"
+                  : "text-her-text-muted/35 hover:bg-her-surface/60 hover:text-her-text-muted/55"
+              }`}
+              aria-label={isSpeaking ? "Stop voice" : "Listen to this message"}
+              title={isSpeaking ? "Stop voice" : "Listen (Neural TTS)"}
+            >
+              {isSpeaking ? (
+                <>
+                  <span className="h-1.5 w-1.5 rounded-full bg-her-accent animate-ping" />
+                  <span>stop</span>
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3">
+                    <path d="M10 3.75a.75.75 0 00-1.264-.546L4.703 7H3.25A2.25 2.25 0 001 9.25v1.5A2.25 2.25 0 003.25 13h1.453l4.033 3.796A.75.75 0 0010 16.25V3.75zM14.28 6.22a.75.75 0 011.06 0 6.75 6.75 0 010 7.56.75.75 0 11-1.06-1.06 5.25 5.25 0 000-5.44.75.75 0 010-1.06z" />
+                  </svg>
+                  <span>listen</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {canReply && showReplyBtn && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onReply!(message); setShowReplyBtn(false); }}
+              className="flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] tracking-[0.03em] text-her-text-muted/35 transition-all duration-200 hover:bg-her-surface/60 hover:text-her-text-muted/55 active:scale-[0.94]"
+              aria-label="Reply to this message"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 -scale-x-100">
+                <path d="M1.75 1.002a.75.75 0 1 0 0 1.5h6.5a3.75 3.75 0 0 1 0 7.5h-3.44l1.72-1.72a.75.75 0 0 0-1.06-1.06l-3 3a.75.75 0 0 0 0 1.06l3 3a.75.75 0 1 0 1.06-1.06l-1.72-1.72h3.44a5.25 5.25 0 0 0 0-10.5h-6.5Z" />
+              </svg>
+              <span>reply</span>
+            </button>
+          )}
+        </div>
       )}
 
       {/* Edited indicator + Timestamp */}

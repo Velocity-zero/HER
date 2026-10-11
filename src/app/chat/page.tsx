@@ -58,6 +58,9 @@ import EmptyState from "@/components/chat/EmptyState";
 import ImageStudio from "@/components/chat/ImageStudio";
 import ModeSelector from "@/components/chat/ModeSelector";
 import AuthModal from "@/components/AuthModal";
+import EarbudModeModal from "@/components/chat/EarbudModeModal";
+import { useVoicePlayer } from "@/lib/use-voice-player";
+import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import type { ImageStudioMode, ConversationMode } from "@/lib/types";
 
 /**
@@ -499,6 +502,41 @@ export default function ChatPage() {
   /** Compact behavioral-only context (Step EXP+1) — never contains emotion labels. */
   const [interactionContext, setInteractionContext] = useState<string | null>(null);
 
+  // ── Earbud Voice Mode & Streaming Voice ──
+  const [earbudOpen, setEarbudOpen] = useState(false);
+  const earbudOpenRef = useRef(earbudOpen);
+  useEffect(() => {
+    earbudOpenRef.current = earbudOpen;
+  }, [earbudOpen]);
+
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+
+  const voicePlayer = useVoicePlayer({
+    onPlaybackEnd: () => {
+      setSpeakingMessageId(null);
+    },
+  });
+  const voicePlayerRef = useRef(voicePlayer);
+  voicePlayerRef.current = voicePlayer;
+
+  // Ref-stable send callback for STT silence timeout
+  const handleSendVoiceMessageRef = useRef<(text: string) => void>(() => {});
+
+  const speechRec = useSpeechRecognition({
+    onFinalTranscript: (text) => {
+      handleSendVoiceMessageRef.current(text);
+    },
+    onSpeechStart: () => {
+      // Auto-interruption: speaking immediately stops HER's audio
+      if (voicePlayerRef.current.isPlaying) {
+        voicePlayerRef.current.stopSpeaking();
+        setSpeakingMessageId(null);
+      }
+    },
+  });
+  const speechRecRef = useRef(speechRec);
+  speechRecRef.current = speechRec;
+
   /**
    * Fire-and-forget: extract memories from a set of messages and refresh context.
    * Uses a ref-stable function so it can be called from any callback without
@@ -804,9 +842,11 @@ export default function ChatPage() {
     (conversationId: string) => {
       // Guard: skip if already loading or selecting the same conversation
       if (loadingConvo || conversationId === activeConvoId) return;
+      voicePlayer.stopSpeaking();
+      setSpeakingMessageId(null);
       loadConversationMessages(conversationId);
     },
-    [loadConversationMessages, loadingConvo, activeConvoId]
+    [loadConversationMessages, loadingConvo, activeConvoId, voicePlayer]
   );
 
   // ── Refresh the conversation list (e.g. after a new message) ──
@@ -1305,6 +1345,10 @@ export default function ChatPage() {
         const chunk = decoder.decode(value, { stream: true });
         fullText += chunk;
 
+        if (earbudOpenRef.current) {
+          voicePlayerRef.current.feedChunk(chunk);
+        }
+
         // Update the assistant message in-place
         const textSoFar = fullText;
         setMessages((prev) =>
@@ -1314,6 +1358,10 @@ export default function ChatPage() {
         );
         // Streaming auto-scroll is owned by virtuoso's followOutput now —
         // no manual scroll signal needed per token.
+      }
+
+      if (earbudOpenRef.current) {
+        voicePlayerRef.current.finishFeeding();
       }
 
       // ── Stream complete — finalize ──
@@ -1474,6 +1522,25 @@ export default function ChatPage() {
       if (abortRef.current === controller) abortRef.current = null;
     }
   }, [activeConvoId, refreshConversations, conversationMode, memoryContext, interactionContext, replyingTo, LOCAL_IMAGE, isAuthenticated]);
+
+  // Connect STT final transcript to handleSend
+  useEffect(() => {
+    handleSendVoiceMessageRef.current = (text: string) => {
+      if (!text.trim() || sendingRef.current) return;
+      handleSend(text.trim());
+    };
+  }, [handleSend]);
+
+  // ── Standalone message speaker handlers ──
+  const handleSpeakMessage = useCallback((msgId: string, text: string) => {
+    setSpeakingMessageId(msgId);
+    voicePlayer.speakText(text);
+  }, [voicePlayer]);
+
+  const handleStopSpeak = useCallback(() => {
+    voicePlayer.stopSpeaking();
+    setSpeakingMessageId(null);
+  }, [voicePlayer]);
 
   const handleRetry = useCallback(() => {
     if (!retryContent || sendingRef.current) return;
@@ -1796,6 +1863,8 @@ export default function ChatPage() {
     autoImageAbortRef.current = null;
     explicitImageAbortRef.current?.abort();
     explicitImageAbortRef.current = null;
+    voicePlayer.stopSpeaking();
+    setSpeakingMessageId(null);
     clearSession();
     clearActiveConversationId();
     setActiveConvoId(null);
@@ -1912,6 +1981,8 @@ export default function ChatPage() {
         onClear={handleClear}
         onHistoryOpen={openHistory}
         onSignInClick={openAuth}
+        onEarbudOpen={() => setEarbudOpen((prev) => !prev)}
+        isEarbudActive={earbudOpen}
         accessToken={accessTokenRef.current}
       />
 
@@ -2004,6 +2075,9 @@ export default function ChatPage() {
               onReaction={handleReaction}
               onEdit={handleEditMessage}
               onDelete={handleDeleteMessage}
+              onSpeak={(text) => handleSpeakMessage(msg.id, text)}
+              isSpeaking={speakingMessageId === msg.id && voicePlayer.isPlaying}
+              onStopSpeak={handleStopSpeak}
             />
           );
         }}
@@ -2086,8 +2160,31 @@ export default function ChatPage() {
         onPrefillConsumed={consumePrefill}
         onToggleStudio={toggleStudio}
         studioOpen={studioOpen}
+        onToggleEarbud={() => setEarbudOpen((prev) => !prev)}
+        earbudActive={earbudOpen}
         replyingTo={replyingTo}
         onCancelReply={cancelReply}
+      />
+
+      {/* Earbud Mode Modal — Hands-free voice overlay */}
+      <EarbudModeModal
+        isOpen={earbudOpen}
+        onClose={() => setEarbudOpen(false)}
+        isStreaming={isStreaming}
+        isTyping={isTyping}
+        onSendMessage={(text) => handleSend(text)}
+        isPlayingVoice={voicePlayer.isPlaying}
+        currentVoiceSentence={voicePlayer.currentSentence}
+        selectedVoice={voicePlayer.selectedVoice}
+        onChangeVoice={voicePlayer.setSelectedVoice}
+        stopVoice={voicePlayer.stopSpeaking}
+        getVoiceVolume={voicePlayer.getVolume}
+        isListening={speechRec.isListening}
+        isUserSpeaking={speechRec.isUserSpeaking}
+        userTranscript={speechRec.transcript}
+        startListening={speechRec.startListening}
+        stopListening={speechRec.stopListening}
+        getMicVolume={speechRec.getMicVolume}
       />
     </div>
   );

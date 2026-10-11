@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useCallback, useEffect } from "react";
 import { useAuth } from "@/components/AuthProvider";
@@ -16,11 +16,15 @@ interface ChatHeaderProps {
   onHistoryOpen?: () => void;
   /** Opens the magic-link sign-in modal. Shown for guests in place of the history icon. */
   onSignInClick?: () => void;
+  /** Opens the hands-free Earbud voice mode. */
+  onEarbudOpen?: () => void;
+  /** Whether earbud voice mode is currently active. */
+  isEarbudActive?: boolean;
   /** Kept for API compatibility; no longer used by the header itself. */
   accessToken?: string | null;
 }
 
-export default function ChatHeader({ onClear, onHistoryOpen, onSignInClick }: ChatHeaderProps) {
+export default function ChatHeader({ onClear, onHistoryOpen, onSignInClick, onEarbudOpen, isEarbudActive }: ChatHeaderProps) {
   const [confirming, setConfirming] = useState(false);
   const { isAuthenticated, loading } = useAuth();
 
@@ -86,8 +90,38 @@ export default function ChatHeader({ onClear, onHistoryOpen, onSignInClick }: Ch
         </span>
       </div>
 
-      {/* Right â€” primary action (new chat / start over) */}
-      <div className="flex items-center">
+      {/* Right — Earbud Mode & primary action */}
+      <div className="flex items-center gap-0.5 sm:gap-1">
+        {onEarbudOpen && (
+          <button
+            onClick={onEarbudOpen}
+            aria-label="Open Earbud voice mode"
+            title="Earbud Mode (Hands-free voice)"
+            className={`
+              flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full
+              transition-all duration-300 ease-out active:scale-[0.92]
+              ${isEarbudActive
+                ? "text-her-accent"
+                : "text-her-text-muted/40 hover:text-her-text-muted/65"
+              }
+            `}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-[17px] w-[17px]"
+            >
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+            </svg>
+          </button>
+        )}
+
         {onClear ? (
           <button
             onClick={handleClearClick}

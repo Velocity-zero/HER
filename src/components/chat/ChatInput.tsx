@@ -29,6 +29,10 @@ interface ChatInputProps {
   onToggleStudio?: () => void;
   /** Whether the Image Studio is currently open */
   studioOpen?: boolean;
+  /** Toggle the Earbud hands-free mode */
+  onToggleEarbud?: () => void;
+  /** Whether the Earbud mode is currently active */
+  earbudActive?: boolean;
   /** The message being replied to (shows quote bar above input) */
   replyingTo?: ReplyRef | null;
   /** Called to dismiss the reply quote */
@@ -45,7 +49,18 @@ function readFileAsDataURL(file: File): Promise<string> {
   });
 }
 
-export default function ChatInput({ onSend, disabled = false, prefillText, onPrefillConsumed, onToggleStudio, studioOpen, replyingTo, onCancelReply }: ChatInputProps) {
+export default function ChatInput({
+  onSend,
+  disabled = false,
+  prefillText,
+  onPrefillConsumed,
+  onToggleStudio,
+  studioOpen,
+  onToggleEarbud,
+  earbudActive,
+  replyingTo,
+  onCancelReply,
+}: ChatInputProps) {
   const [value, setValue] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -246,6 +261,36 @@ export default function ChatInput({ onSend, disabled = false, prefillText, onPre
             >
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-[16px] w-[16px] sm:h-[17px] sm:w-[17px]">
                 <path fillRule="evenodd" d="M1 5.25A2.25 2.25 0 013.25 3h13.5A2.25 2.25 0 0119 5.25v9.5A2.25 2.25 0 0116.75 17H3.25A2.25 2.25 0 011 14.75v-9.5zm1.5 5.81v3.69c0 .414.336.75.75.75h13.5a.75.75 0 00.75-.75v-2.69l-2.22-2.219a.75.75 0 00-1.06 0l-1.91 1.909-4.22-4.22a.75.75 0 00-1.06 0L2.5 11.06zm6.5-3.81a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+
+          {/* Earbud Voice mode toggle */}
+          {onToggleEarbud && (
+            <button
+              type="button"
+              onClick={onToggleEarbud}
+              disabled={disabled}
+              aria-label={earbudActive ? "Close voice mode" : "Open voice mode"}
+              title="Earbud Mode (Hands-free voice)"
+              className={`mb-0.5 flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full transition-all duration-300 active:scale-[0.92] disabled:opacity-25 disabled:cursor-not-allowed sm:h-[44px] sm:w-[44px] ${
+                earbudActive
+                  ? "bg-her-accent/[0.12] text-her-accent hover:bg-her-accent/[0.18]"
+                  : "text-her-text-muted/28 hover:bg-her-surface/60 hover:text-her-text-muted/50"
+              }`}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-[16px] w-[16px] sm:h-[17px] sm:w-[17px]"
+              >
+                <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
               </svg>
             </button>
           )}
