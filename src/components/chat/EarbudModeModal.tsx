@@ -293,7 +293,7 @@ export default function EarbudModeModal({
       </header>
 
       {/* ── Center: Ongoing Context, Visual Aura & Live Transcript ── */}
-      <main className="flex flex-1 flex-col items-center justify-center px-4 sm:px-6">
+      <main className="flex flex-1 flex-col items-center justify-center px-4 sm:px-6 overflow-y-auto w-full max-w-lg mx-auto py-1">
         {/* Ongoing Conversation Context Pill */}
         {recentAssistantMessage && !isPlayingVoice && (
           <div
@@ -327,12 +327,12 @@ export default function EarbudModeModal({
         )}
 
         {/* Glowing Ambient Aura */}
-        <div className="relative my-2 sm:my-4 cursor-pointer">
+        <div className="relative my-1 sm:my-2 cursor-pointer">
           <AudioAura
             state={auraState}
             getAudioVolume={getVoiceVolume}
             getMicVolume={getMicVolume}
-            size={typeof window !== "undefined" && window.innerWidth < 640 ? 250 : 320}
+            size={210}
           />
         </div>
 
@@ -452,7 +452,7 @@ export default function EarbudModeModal({
 
       {/* ── Bottom Controls ── */}
       <footer
-        className="flex flex-col items-center justify-center pb-6 pt-2 px-6 sm:pb-8 w-full max-w-lg mx-auto"
+        className="flex flex-col items-center justify-center pb-5 pt-2 px-4 sm:pb-7 w-full max-w-lg mx-auto shrink-0"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Optional Whisper Text Field for noisy environments */}
