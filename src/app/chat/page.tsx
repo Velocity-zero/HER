@@ -539,8 +539,11 @@ export default function ChatPage() {
 
   const toggleEarbud = useCallback(() => {
     voicePlayer.unlockAudio();
+    if (speechRec.micPermission !== "granted") {
+      speechRec.requestMicPermission().catch(() => {});
+    }
     setEarbudOpen((prev) => !prev);
-  }, [voicePlayer]);
+  }, [voicePlayer, speechRec]);
 
   /**
    * Fire-and-forget: extract memories from a set of messages and refresh context.

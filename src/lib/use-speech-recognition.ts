@@ -213,16 +213,6 @@ export function useSpeechRecognition({
       if (isStartingRef.current) return;
       isStartingRef.current = true;
 
-      // If microphone permission hasn't been granted yet, explicitly request it first
-      // so Chrome / mobile registers the site permission and pops the browser prompt
-      if (micPermission !== "granted") {
-        const granted = await requestMicPermission();
-        if (!granted) {
-          isStartingRef.current = false;
-          return;
-        }
-      }
-
       shouldListenRef.current = true;
       finalTranscriptAccumulatorRef.current = "";
       setTranscript("");
