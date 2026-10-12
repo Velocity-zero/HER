@@ -175,6 +175,10 @@ export async function saveMessageToSupabase(params: {
   role: "user" | "assistant";
   content: string;
   imageUrl?: string;
+  audioUrl?: string;
+  audioDuration?: number;
+  isVoiceNote?: boolean;
+  voiceEmotion?: string;
   replyToId?: string;
   replyToContent?: string;
   replyToRole?: "user" | "assistant";
@@ -188,7 +192,7 @@ export async function saveMessageToSupabase(params: {
     const { logPipelineStage } = await import("./pipeline-logger");
     logPipelineStage("Persistence (Before Save)", params.content);
 
-    const { data, error } = await client.from("messages").insert({
+    const basePayload = {
       conversation_id: params.conversationId,
       user_id: params.userId,
       role: params.role,
@@ -198,7 +202,25 @@ export async function saveMessageToSupabase(params: {
       reply_to_content: params.replyToContent || null,
       reply_to_role: params.replyToRole || null,
       client_message_id: params.clientMessageId || null,
-    }).select("id, content").single();
+    };
+
+    const fullPayload = {
+      ...basePayload,
+      audio_url: params.audioUrl || null,
+      audio_duration: params.audioDuration || null,
+      is_voice_note: params.isVoiceNote || false,
+      voice_emotion: params.voiceEmotion || null,
+    };
+
+    let { data, error } = await client.from("messages").insert(fullPayload).select("id, content").single();
+
+    // Resilient fallback: if the database doesn't have the new voice note columns yet
+    if (error && error.message?.includes("column")) {
+      console.warn("[HER DB] Voice columns not present yet, falling back to base insert");
+      const fallbackResult = await client.from("messages").insert(basePayload).select("id, content").single();
+      data = fallbackResult.data;
+      error = fallbackResult.error;
+    }
 
     if (error) {
       console.warn(`[HER DB] Save ${params.role} message failed:`, error.message);
@@ -310,6 +332,10 @@ export interface DbMessage {
   content: string;
   created_at: string;
   image_url: string | null;
+  audio_url?: string | null;
+  audio_duration?: number | null;
+  is_voice_note?: boolean | null;
+  voice_emotion?: string | null;
   /** ID of the message being replied to (nullable) */
   reply_to_id: string | null;
   /** Snapshot of the quoted message content (nullable) */

@@ -43,18 +43,31 @@ declare global {
 
 export type MicPermissionState = "prompt" | "granted" | "denied" | "unsupported";
 
+export interface VoiceEmotion {
+  tone: "hesitant" | "excited" | "quiet" | "stressed" | "sad" | "warm" | "casual";
+  pace: "slow" | "fast" | "moderate";
+  energy: "soft" | "intense" | "balanced";
+  durationMs: number;
+  pauseCount: number;
+  wpm: number;
+  summary: string;
+}
+
 export interface UseSpeechRecognitionOptions {
-  onFinalTranscript?: (text: string) => void;
+  onFinalTranscript?: (text: string, emotion?: VoiceEmotion) => void;
   onSpeechStart?: () => void;
-  silenceTimeoutMs?: number; // default: 1300ms
+  silenceTimeoutMs?: number; // default: 2200ms
   lang?: string;
+  /** Whether HER is currently speaking or streaming audio (mutes STT to prevent feedback) */
+  isPlaybackActive?: boolean;
 }
 
 export function useSpeechRecognition({
   onFinalTranscript,
   onSpeechStart,
-  silenceTimeoutMs = 1300,
+  silenceTimeoutMs = 2200,
   lang = "en-US",
+  isPlaybackActive = false,
 }: UseSpeechRecognitionOptions = {}) {
   const [isListening, setIsListening] = useState(false);
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
@@ -75,6 +88,13 @@ export function useSpeechRecognition({
   const langRef = useRef(lang);
   langRef.current = lang;
 
+  const isPlaybackActiveRef = useRef(isPlaybackActive);
+  const isGracePeriodRef = useRef(false);
+
+  const speechStartTimeRef = useRef(0);
+  const speechPauseCountRef = useRef(0);
+  const energySamplesRef = useRef<number[]>([]);
+
   const recognitionRef = useRef<IWindowSpeechRecognition | null>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const shouldListenRef = useRef(false);
@@ -82,6 +102,26 @@ export function useSpeechRecognition({
   const isUserSpeakingRef = useRef(false);
   const finalTranscriptAccumulatorRef = useRef("");
   const consecutiveErrorsRef = useRef(0);
+
+  // Sync playback active state and manage acoustic echo grace period
+  useEffect(() => {
+    isPlaybackActiveRef.current = isPlaybackActive;
+    if (isPlaybackActive) {
+      isGracePeriodRef.current = true;
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      setIsUserSpeaking(false);
+      isUserSpeakingRef.current = false;
+    } else {
+      // 400ms grace window so speaker reverb / decay doesn't trip speech detection
+      const timer = setTimeout(() => {
+        isGracePeriodRef.current = false;
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [isPlaybackActive]);
 
   // Check Web Speech API support & initial permission query on mount
   useEffect(() => {
@@ -120,33 +160,70 @@ export function useSpeechRecognition({
     }
   }, []);
 
-  // Submit finalized transcript and reset buffer
+  // Submit finalized transcript with emotion analysis and reset buffer
   const submitTranscript = useCallback(() => {
     clearSilenceTimer();
     const final = (finalTranscriptAccumulatorRef.current + " " + transcript).trim();
-    if (final) {
-      onFinalTranscriptRef.current?.(final);
+    
+    // Ignore empty utterances or pure punctuation / phantom clicks
+    if (final.length >= 2 && !/^[\s.,!?'-]+$/.test(final)) {
+      const durationMs = Math.max(400, Date.now() - (speechStartTimeRef.current || Date.now()));
+      const words = final.split(/\s+/).filter(Boolean);
+      const wpm = Math.round((words.length / (durationMs / 60000)) || 120);
+
+      const avgEnergy = energySamplesRef.current.length > 0
+        ? energySamplesRef.current.reduce((a, b) => a + b, 0) / energySamplesRef.current.length
+        : 0.5;
+      const energy: "soft" | "intense" | "balanced" =
+        avgEnergy < 0.28 ? "soft" : avgEnergy > 0.72 ? "intense" : "balanced";
+
+      const pace: "slow" | "fast" | "moderate" =
+        wpm > 175 ? "fast" : wpm < 90 ? "slow" : "moderate";
+
+      let tone: VoiceEmotion["tone"] = "casual";
+      if (speechPauseCountRef.current >= 2 || (pace === "slow" && energy === "soft")) {
+        tone = "hesitant";
+      } else if (energy === "intense" && pace === "fast") {
+        tone = "excited";
+      } else if (energy === "soft" && pace === "slow") {
+        tone = "quiet";
+      } else if (pace === "fast") {
+        tone = "stressed";
+      } else if (energy === "soft") {
+        tone = "sad";
+      } else if (energy === "balanced" && pace === "moderate") {
+        tone = "warm";
+      }
+
+      const emotion: VoiceEmotion = {
+        tone,
+        pace,
+        energy,
+        durationMs,
+        pauseCount: speechPauseCountRef.current,
+        wpm,
+        summary: `${tone} tone, ${pace} pace, ${energy} energy`,
+      };
+
+      onFinalTranscriptRef.current?.(final, emotion);
       finalTranscriptAccumulatorRef.current = "";
       setTranscript("");
     }
+
+    speechStartTimeRef.current = 0;
+    speechPauseCountRef.current = 0;
+    energySamplesRef.current = [];
     setIsUserSpeaking(false);
     isUserSpeakingRef.current = false;
   }, [clearSilenceTimer, transcript]);
 
   const restartSilenceTimer = useCallback(() => {
     clearSilenceTimer();
+    speechPauseCountRef.current += 1;
     silenceTimerRef.current = setTimeout(() => {
-      clearSilenceTimer();
-      const final = (finalTranscriptAccumulatorRef.current + " " + transcript).trim();
-      if (final) {
-        onFinalTranscriptRef.current?.(final);
-        finalTranscriptAccumulatorRef.current = "";
-        setTranscript("");
-      }
-      setIsUserSpeaking(false);
-      isUserSpeakingRef.current = false;
+      submitTranscript();
     }, silenceTimeoutMsRef.current);
-  }, [clearSilenceTimer, transcript]);
+  }, [clearSilenceTimer, submitTranscript]);
 
   /**
    * Explicitly requests native browser microphone permission via getUserMedia,
@@ -235,17 +312,29 @@ export function useSpeechRecognition({
         };
 
         recognition.onspeechstart = () => {
+          if (isPlaybackActiveRef.current || isGracePeriodRef.current) return;
+          if (!speechStartTimeRef.current) speechStartTimeRef.current = Date.now();
           setIsUserSpeaking(true);
           isUserSpeakingRef.current = true;
           onSpeechStartRef.current?.();
         };
 
         recognition.onsoundstart = () => {
+          if (isPlaybackActiveRef.current || isGracePeriodRef.current) return;
+          if (!speechStartTimeRef.current) speechStartTimeRef.current = Date.now();
           setIsUserSpeaking(true);
           isUserSpeakingRef.current = true;
         };
 
         recognition.onresult = (event: SpeechRecognitionEvent) => {
+          if (isPlaybackActiveRef.current || isGracePeriodRef.current) {
+            // Echo cancellation: ignore audio while HER is speaking or during post-speech grace period
+            return;
+          }
+
+          if (!speechStartTimeRef.current) speechStartTimeRef.current = Date.now();
+          energySamplesRef.current.push(getMicVolume());
+
           let interim = "";
           let finalized = "";
 

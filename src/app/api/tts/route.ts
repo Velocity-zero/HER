@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EdgeTTS } from "edge-tts-universal";
+import { processSpeechText } from "@/lib/voice-styles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
  * Cache for synthesized audio buffers to avoid duplicate requests for identical sentences.
- * Key: voice:rate:pitch:cleanedText
+ * Key: voice:rate:pitch:volume:cleanedText
  */
 const audioCache = new Map<string, { buffer: Uint8Array; timestamp: number }>();
 const MAX_CACHE_ENTRIES = 200;
 
-function getCacheKey(voice: string, rate: string, pitch: string, text: string): string {
-  return `${voice}|${rate}|${pitch}|${text}`;
+function getCacheKey(voice: string, rate: string, pitch: string, volume: string, text: string): string {
+  return `${voice}|${rate}|${pitch}|${volume}|${text}`;
 }
 
 function getFromCache(key: string): Uint8Array | null {
@@ -90,8 +91,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const rawText = body.text;
     const requestedVoice = body.voice || DEFAULT_VOICE;
-    const rate = body.rate || "+0%";
-    const pitch = body.pitch || "+0Hz";
+    const baseRate = body.rate || "+0%";
+    const basePitch = body.pitch || "+0Hz";
 
     if (!rawText || typeof rawText !== "string" || !rawText.trim()) {
       return NextResponse.json(
@@ -100,7 +101,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const clean = cleanTextForSpeech(rawText);
+    // Process emotional style tags and realistic paralinguistics
+    const processed = processSpeechText(rawText, baseRate, basePitch);
+    const rate = processed.rate;
+    const pitch = processed.pitch;
+    const volume = processed.volume;
+
+    const clean = cleanTextForSpeech(processed.cleanText);
     if (!clean) {
       return NextResponse.json(
         { error: "Text contained only symbols/formatting" },
@@ -112,7 +119,7 @@ export async function POST(req: NextRequest) {
     const textToSynthesize = clean.slice(0, 1200);
 
     const voice = ALLOWED_VOICES[requestedVoice] || DEFAULT_VOICE;
-    const cacheKey = getCacheKey(voice, rate, pitch, textToSynthesize);
+    const cacheKey = getCacheKey(voice, rate, pitch, volume, textToSynthesize);
 
     // Check memory cache
     const cached = getFromCache(cacheKey);
@@ -130,7 +137,7 @@ export async function POST(req: NextRequest) {
     // Synthesize using primary voice
     let audioBuffer: Uint8Array | null = null;
     try {
-      const tts = new EdgeTTS(textToSynthesize, voice, { rate, pitch });
+      const tts = new EdgeTTS(textToSynthesize, voice, { rate, pitch, volume });
       const result = await tts.synthesize();
       if (result && result.audio) {
         audioBuffer = new Uint8Array(await result.audio.arrayBuffer());
@@ -139,7 +146,7 @@ export async function POST(req: NextRequest) {
       console.warn(`[TTS] Primary voice (${voice}) failed, trying fallback (${FALLBACK_VOICE}):`, primaryErr);
       if (voice !== FALLBACK_VOICE) {
         try {
-          const fallbackTts = new EdgeTTS(textToSynthesize, FALLBACK_VOICE, { rate, pitch });
+          const fallbackTts = new EdgeTTS(textToSynthesize, FALLBACK_VOICE, { rate, pitch, volume });
           const result = await fallbackTts.synthesize();
           if (result && result.audio) {
             audioBuffer = new Uint8Array(await result.audio.arrayBuffer());

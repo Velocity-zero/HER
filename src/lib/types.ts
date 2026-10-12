@@ -20,6 +20,14 @@ export interface Message {
   replyTo?: ReplyRef;
   /** Emoji reactions — maps emoji to array of who reacted ("user" | "her") */
   reactions?: Record<string, string[]>;
+  /** Audio URL or base64 data URL for voice notes / speech audio */
+  audioUrl?: string;
+  /** Duration in seconds of the voice note */
+  audioDuration?: number;
+  /** True if this message is a voice note (WhatsApp style player) */
+  isVoiceNote?: boolean;
+  /** Detected vocal emotion descriptor if sent via speech */
+  voiceEmotion?: string;
   /** ISO timestamp — set when the user edits the message after sending */
   edited_at?: string;
   /** True if the message has been soft-deleted (shows tombstone, excluded from prompts) */

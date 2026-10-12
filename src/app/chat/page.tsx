@@ -60,7 +60,8 @@ import ModeSelector from "@/components/chat/ModeSelector";
 import AuthModal from "@/components/AuthModal";
 import EarbudModeModal from "@/components/chat/EarbudModeModal";
 import { useVoicePlayer } from "@/lib/use-voice-player";
-import { useSpeechRecognition } from "@/lib/use-speech-recognition";
+import { useSpeechRecognition, type VoiceEmotion } from "@/lib/use-speech-recognition";
+import type { VoiceNoteMeta } from "@/components/chat/ChatInput";
 import type { ImageStudioMode, ConversationMode } from "@/lib/types";
 
 /**
@@ -105,6 +106,10 @@ function dbMessageToUiMessage(dbMsg: DbMessage): Message {
     content: dbMsg.content.replace(/\s*\[user reacted to this: [^\]]*\]/g, ""),
     timestamp: new Date(dbMsg.created_at).getTime(),
     ...(dbMsg.image_url ? { image: dbMsg.image_url } : {}),
+    ...(dbMsg.audio_url ? { audioUrl: dbMsg.audio_url } : {}),
+    ...(typeof dbMsg.audio_duration === "number" ? { audioDuration: dbMsg.audio_duration } : {}),
+    ...(dbMsg.is_voice_note ? { isVoiceNote: true } : {}),
+    ...(dbMsg.voice_emotion ? { voiceEmotion: dbMsg.voice_emotion } : {}),
     ...(dbMsg.reply_to_id && dbMsg.reply_to_content && dbMsg.reply_to_role
       ? { replyTo: { id: dbMsg.reply_to_id, content: dbMsg.reply_to_content, role: dbMsg.reply_to_role } }
       : {}),
@@ -227,6 +232,9 @@ async function persistAssistantMessage(
   clientMessageId: string,
   imageUrl: string | undefined,
   refreshConversations: () => Promise<void>,
+  audioUrl?: string,
+  audioDuration?: number,
+  isVoiceNote?: boolean,
 ): Promise<void> {
   if (!convoId) return;
 
@@ -242,6 +250,9 @@ async function persistAssistantMessage(
     role: "assistant",
     content,
     imageUrl: finalUrl,
+    audioUrl,
+    audioDuration,
+    isVoiceNote,
     clientMessageId,
   }).catch(() => {});
   touchConversation(convoId).catch(() => {});
@@ -519,15 +530,20 @@ export default function ChatPage() {
   const voicePlayerRef = useRef(voicePlayer);
   voicePlayerRef.current = voicePlayer;
 
-  // Ref-stable send callback for STT silence timeout
-  const handleSendVoiceMessageRef = useRef<(text: string) => void>(() => {});
+  // Ref-stable send callback for STT silence timeout with detected vocal emotion
+  const handleSendVoiceMessageRef = useRef<(text: string, emotion?: VoiceEmotion) => void>(() => {});
+  const lastDetectedVoiceEmotionRef = useRef<VoiceEmotion | undefined>(undefined);
 
   const speechRec = useSpeechRecognition({
-    onFinalTranscript: (text) => {
-      handleSendVoiceMessageRef.current(text);
+    isPlaybackActive: voicePlayer.isPlaying || isStreaming,
+    onFinalTranscript: (text, emotion) => {
+      if (emotion) {
+        lastDetectedVoiceEmotionRef.current = emotion;
+      }
+      handleSendVoiceMessageRef.current(text, emotion);
     },
     onSpeechStart: () => {
-      // Auto-interruption: speaking immediately stops HER's audio
+      // Only stop HER if she is actively speaking and not in muted grace period
       if (voicePlayerRef.current.isPlaying) {
         voicePlayerRef.current.stopSpeaking();
         setSpeakingMessageId(null);
@@ -944,7 +960,12 @@ export default function ChatPage() {
   );
 
   // ── Send a message (with streaming response) ──
-  const handleSend = useCallback(async (content: string, image?: string) => {
+  const handleSend = useCallback(async (
+    content: string,
+    image?: string,
+    voiceNoteMeta?: VoiceNoteMeta,
+    voiceEmotion?: VoiceEmotion
+  ) => {
     if (sendingRef.current) return;
     sendingRef.current = true;
     setError(null);
@@ -955,14 +976,25 @@ export default function ChatPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Detect vocal nuance from Earbud mode or Voice Note
+    const activeEmotion = voiceEmotion || (earbudOpenRef.current ? lastDetectedVoiceEmotionRef.current : undefined);
+
     // Add user message
     const userMessage: Message = {
       id: generateId(),
       role: "user",
-      content: content || (image ? "(shared a photo)" : ""),
+      content: content || (voiceNoteMeta?.isVoiceNote ? "🎙️ Voice message" : image ? "(shared a photo)" : ""),
       timestamp: Date.now(),
       ...(image ? { image } : {}),
       ...(replyingTo ? { replyTo: { ...replyingTo } } : {}),
+      ...(voiceNoteMeta?.isVoiceNote ? {
+        audioUrl: voiceNoteMeta.audioUrl,
+        audioDuration: voiceNoteMeta.audioDuration,
+        isVoiceNote: true,
+        voiceEmotion: voiceEmotion?.summary || voiceNoteMeta.voiceEmotion,
+      } : activeEmotion ? {
+        voiceEmotion: activeEmotion.summary,
+      } : {}),
     };
 
     // Clear the reply state immediately so it doesn't linger
@@ -1000,7 +1032,7 @@ export default function ChatPage() {
     }
 
     if (convoId) {
-      // Non-blocking background save for user message & image upload
+      // Non-blocking background save for user message, image, & voice note
       (async () => {
         try {
           let userImageUrl: string | undefined = image || undefined;
@@ -1014,6 +1046,10 @@ export default function ChatPage() {
             role: "user",
             content: userMessage.content,
             imageUrl: userImageUrl,
+            audioUrl: userMessage.audioUrl,
+            audioDuration: userMessage.audioDuration,
+            isVoiceNote: userMessage.isVoiceNote,
+            voiceEmotion: userMessage.voiceEmotion,
             clientMessageId: userMessage.id,
             ...(currentReply ? {
               replyToId: currentReply.id,
@@ -1302,6 +1338,12 @@ export default function ChatPage() {
       }
     }
 
+    const voiceEmotionContext = activeEmotion
+      ? `User spoke with voice: vocal nuance detected (${activeEmotion.summary}). Attune your tone, pacing, and presence naturally to meet them.`
+      : voiceNoteMeta?.isVoiceNote
+      ? `User sent a voice message. Reply warmly with emotional continuity.`
+      : undefined;
+
     try {
       const res = await authFetch("/api/chat?stream=true", {
         method: "POST",
@@ -1311,7 +1353,7 @@ export default function ChatPage() {
           mode: conversationMode,
           rapportLevel: currentRapport,
           memoryContext: memoryContext ?? undefined,
-          continuityContext: [continuityContext, reactionContext, interactionContext].filter(Boolean).join("\n") || undefined,
+          continuityContext: [continuityContext, reactionContext, interactionContext, voiceEmotionContext].filter(Boolean).join("\n") || undefined,
           responseModeInstruction,
           antiRepetitionInstruction,
           userTimezone: detectUserTimezone(),
@@ -1391,6 +1433,54 @@ export default function ChatPage() {
 
       // ── Persist FINAL assistant message to Supabase (fire-and-forget) ──
       persistAssistantMessage(convoId, userId, fullText, herMessageId, undefined, refreshConversations);
+
+      // If user sent a voice note, HER replies with an audio voice note in chat too
+      if (voiceNoteMeta?.isVoiceNote) {
+        (async () => {
+          try {
+            const ttsRes = await fetch("/api/tts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: fullText,
+                voice: voicePlayerRef.current.selectedVoice,
+              }),
+            });
+            if (ttsRes.ok) {
+              const audioBlob = await ttsRes.blob();
+              const audioUrl = URL.createObjectURL(audioBlob);
+              const durationSec = Math.max(2, Math.round(fullText.split(/\s+/).length * 0.38));
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === herMessageId
+                    ? {
+                        ...m,
+                        audioUrl,
+                        isVoiceNote: true,
+                        audioDuration: durationSec,
+                      }
+                    : m
+                )
+              );
+              if (convoId) {
+                persistAssistantMessage(
+                  convoId,
+                  userId,
+                  fullText,
+                  herMessageId,
+                  undefined,
+                  refreshConversations,
+                  audioUrl,
+                  durationSec,
+                  true
+                );
+              }
+            }
+          } catch (e) {
+            console.warn("[HER Voice Note Reply Error]", e);
+          }
+        })();
+      }
 
       // ── HER auto-react: maybe react to the user's message with an emoji ──
       maybeHerReact(userMessage, fullText, handleReactionRef.current, accessTokenRef.current);
@@ -1531,9 +1621,9 @@ export default function ChatPage() {
 
   // Connect STT final transcript to handleSend
   useEffect(() => {
-    handleSendVoiceMessageRef.current = (text: string) => {
+    handleSendVoiceMessageRef.current = (text: string, emotion?: VoiceEmotion) => {
       if (!text.trim() || sendingRef.current) return;
-      handleSend(text.trim());
+      handleSend(text.trim(), undefined, undefined, emotion);
     };
   }, [handleSend]);
 
@@ -2179,7 +2269,7 @@ export default function ChatPage() {
         messages={messages}
         isStreaming={isStreaming}
         isTyping={isTyping}
-        onSendMessage={(text) => handleSend(text)}
+        onSendMessage={(text) => handleSend(text, undefined, undefined, lastDetectedVoiceEmotionRef.current)}
         isPlayingVoice={voicePlayer.isPlaying}
         currentVoiceSentence={voicePlayer.currentSentence}
         selectedVoice={voicePlayer.selectedVoice}

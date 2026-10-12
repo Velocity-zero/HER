@@ -2,6 +2,7 @@ import { Message } from "@/lib/types";
 import { isTouchDevice } from "@/lib/utils";
 import { memo, useState, useRef, useCallback, useEffect, type TouchEvent as ReactTouchEvent } from "react";
 import { logPipelineStage } from "@/lib/pipeline-logger";
+import VoiceNotePlayer from "./VoiceNotePlayer";
 
 /**
  * MessageBubble — A single message in the conversation.
@@ -554,14 +555,46 @@ function MessageBubbleInner({
               </button>
             </div>
           </div>
+        ) : message.isVoiceNote && message.audioUrl ? (
+          <div className="px-1 py-1">
+            <VoiceNotePlayer
+              audioUrl={message.audioUrl}
+              duration={message.audioDuration}
+              transcript={message.content}
+              isAssistant={!isUser}
+              voiceEmotion={message.voiceEmotion}
+            />
+          </div>
         ) : hasText && !isThinkingState && !isImageLoading ? (
           <div className={`msg-text-selectable text-[13.5px] leading-[1.7] tracking-[0.005em] sm:text-[14.5px] sm:leading-[1.75] ${hasImage ? "px-3.5 pb-3 pt-1.5 sm:px-4" : ""}`}>
-            {message.content.split("\n").map((line, i) => (
-              <span key={i}>
-                {i > 0 && <br />}
-                {line}
-              </span>
-            ))}
+            {message.content.split("\n").map((line, i) => {
+              const parts = line.split(/(\[[a-zA-Z_\s-]+\]|\*[a-zA-Z_\s-]+\*)/g);
+              return (
+                <span key={i}>
+                  {i > 0 && <br />}
+                  {parts.map((part, pIdx) => {
+                    if (part.startsWith("[") && part.endsWith("]")) {
+                      return (
+                        <span
+                          key={pIdx}
+                          className="inline-flex items-center rounded-full bg-her-accent/[0.08] px-1.5 py-0.5 text-[10px] font-medium text-her-accent/80 mx-0.5 align-baseline select-none"
+                        >
+                          {part.slice(1, -1)}
+                        </span>
+                      );
+                    }
+                    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+                      return (
+                        <span key={pIdx} className="italic text-her-text-muted/80 font-normal">
+                          {part}
+                        </span>
+                      );
+                    }
+                    return <span key={pIdx}>{part}</span>;
+                  })}
+                </span>
+              );
+            })}
             {isStreaming && <span className="animate-stream-cursor" />}
           </div>
         ) : null}

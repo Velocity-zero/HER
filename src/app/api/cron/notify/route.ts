@@ -35,6 +35,7 @@ import {
   isUserActiveRecently,
 } from "@/lib/scheduled-events";
 import { buildNotificationMessage, buildEmotionAwareMessage } from "@/lib/notification-messages";
+import { synthesizeVoiceNoteAudio } from "@/lib/voice-styles";
 import { getNotificationSettings, isQuietHours, isHighPriorityEvent } from "@/lib/notification-settings";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { sendPushNotification } from "@/lib/push";
@@ -179,19 +180,39 @@ export async function GET(req: NextRequest) {
       // ── Generate HER-style message (with repetition avoidance + memory) ──
       const messageText = await buildNotificationMessage(event, apiKey, recentMessages, memoryContext);
 
-      // ── Insert into messages table (with context tag — Part F) ──
+      // ── Contextual voice note generation for notifications ──
+      // ~35% chance or when high priority / intimate check-in
+      const shouldAttachVoice = highPriority || Math.random() < 0.35;
+      let voiceNote: { audioUrl: string; duration: number } | null = null;
+      if (shouldAttachVoice) {
+        voiceNote = await synthesizeVoiceNoteAudio(messageText).catch(() => null);
+      }
+
+      // ── Insert into messages table (with voice note metadata if present) ──
       const client = getSupabaseClient();
       if (client && event.conversation_id) {
-        await client.from("messages").insert({
+        const payload: Record<string, unknown> = {
           conversation_id: event.conversation_id,
           user_id: event.user_id,
           role: "assistant",
           content: messageText,
-          // NOTE: previously stored a `_notification` marker under `reactions`,
-          // but that column is shaped Record<string, string[]> and the marker
-          // crashed the chat renderer when these rows were paged in. The marker
-          // was never read anywhere, so we just drop it.
-        });
+        };
+        if (voiceNote) {
+          payload.audio_url = voiceNote.audioUrl;
+          payload.audio_duration = voiceNote.duration;
+          payload.is_voice_note = true;
+        }
+
+        const { error: insertErr } = await client.from("messages").insert(payload);
+        if (insertErr && insertErr.message?.includes("column")) {
+          // Graceful fallback if database schema is pending new columns
+          await client.from("messages").insert({
+            conversation_id: event.conversation_id,
+            user_id: event.user_id,
+            role: "assistant",
+            content: messageText,
+          });
+        }
 
         // Touch conversation timestamp
         await client
@@ -203,8 +224,8 @@ export async function GET(req: NextRequest) {
       // ── Send push notification ──
       if (settings.push_subscription) {
         await sendPushNotification(settings.push_subscription, {
-          title: "HER",
-          body: messageText,
+          title: voiceNote ? "HER 🎙️" : "HER",
+          body: voiceNote ? `🎙️ ${messageText}` : messageText,
           data: {
             conversationId: event.conversation_id,
             url: "/chat",
@@ -344,14 +365,37 @@ export async function GET(req: NextRequest) {
         lastTurns,
       });
 
+      // ── Contextual voice note generation for follow-up ──
+      const shouldAttachVoice = Math.random() < 0.35;
+      let voiceNote: { audioUrl: string; duration: number } | null = null;
+      if (shouldAttachVoice) {
+        voiceNote = await synthesizeVoiceNoteAudio(messageText).catch(() => null);
+      }
+
       const client = getSupabaseClient();
       if (client && event.conversation_id) {
-        await client.from("messages").insert({
+        const payload: Record<string, unknown> = {
           conversation_id: event.conversation_id,
           user_id: event.user_id,
           role: "assistant",
           content: messageText,
-        });
+        };
+        if (voiceNote) {
+          payload.audio_url = voiceNote.audioUrl;
+          payload.audio_duration = voiceNote.duration;
+          payload.is_voice_note = true;
+        }
+
+        const { error: insertErr } = await client.from("messages").insert(payload);
+        if (insertErr && insertErr.message?.includes("column")) {
+          await client.from("messages").insert({
+            conversation_id: event.conversation_id,
+            user_id: event.user_id,
+            role: "assistant",
+            content: messageText,
+          });
+        }
+
         await client
           .from("conversations")
           .update({ last_message_at: new Date().toISOString() })
@@ -360,8 +404,8 @@ export async function GET(req: NextRequest) {
 
       if (settings.push_subscription) {
         await sendPushNotification(settings.push_subscription, {
-          title: "HER",
-          body: messageText,
+          title: voiceNote ? "HER 🎙️" : "HER",
+          body: voiceNote ? `🎙️ ${messageText}` : messageText,
           data: { conversationId: event.conversation_id, url: "/chat" },
         }).catch((err) => warnHER("Push", event.id, "follow-up push failed", { err: err instanceof Error ? err.message : String(err) }));
       }
