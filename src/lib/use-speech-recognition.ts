@@ -406,12 +406,11 @@ export function useSpeechRecognition({
           const accumulated = (finalTranscriptAccumulatorRef.current + " " + transcript).trim();
           if (accumulated) {
             submitTranscript();
-            return;
           }
 
-          // Restart listening automatically if still active and no repeated fatal errors
-          if (shouldListenRef.current && consecutiveErrorsRef.current < 2) {
-            const restartDelay = isAndroid ? 700 : 350;
+          // In continuous phone call mode: keep connection alive seamlessly if active
+          if (shouldListenRef.current && consecutiveErrorsRef.current < 3) {
+            const restartDelay = isAndroid ? 600 : 250;
             setTimeout(() => {
               if (shouldListenRef.current && !recognitionRef.current) {
                 try {

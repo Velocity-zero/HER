@@ -372,14 +372,27 @@ export async function getConversationMessages(
   if (!client) return [];
 
   try {
-    // Fetch newest N descending, then reverse to get chronological order.
-    // This is much faster than fetching all + slicing on the client.
-    const { data, error } = await client
+    const fullSelect = "id, role, content, created_at, image_url, audio_url, audio_duration, is_voice_note, voice_emotion, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted";
+    const baseSelect = "id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted";
+
+    let { data, error } = await client
       .from("messages")
-      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted")
+      .select(fullSelect)
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(limit);
+
+    // Resilient fallback if table does not have voice note columns yet
+    if (error && error.message?.includes("column")) {
+      const fallback = await client
+        .from("messages")
+        .select(baseSelect)
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      data = fallback.data as any;
+      error = fallback.error;
+    }
 
     if (error) {
       console.warn("[HER DB] Get messages failed:", error.message);
@@ -410,13 +423,28 @@ export async function getOlderMessages(
   if (!client) return [];
 
   try {
-    const { data, error } = await client
+    const fullSelect = "id, role, content, created_at, image_url, audio_url, audio_duration, is_voice_note, voice_emotion, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted";
+    const baseSelect = "id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted";
+
+    let { data, error } = await client
       .from("messages")
-      .select("id, role, content, created_at, image_url, reply_to_id, reply_to_content, reply_to_role, reactions, edited_at, is_deleted")
+      .select(fullSelect)
       .eq("conversation_id", conversationId)
       .lt("created_at", beforeIso)
       .order("created_at", { ascending: false })
       .limit(limit);
+
+    if (error && error.message?.includes("column")) {
+      const fallback = await client
+        .from("messages")
+        .select(baseSelect)
+        .eq("conversation_id", conversationId)
+        .lt("created_at", beforeIso)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      data = fallback.data as any;
+      error = fallback.error;
+    }
 
     if (error) {
       console.warn("[HER DB] Get older messages failed:", error.message);

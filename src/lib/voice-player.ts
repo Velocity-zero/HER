@@ -27,6 +27,25 @@ interface QueuedItem {
   buffer?: AudioBuffer | null;
 }
 
+function cleanSentence(raw: string): string {
+  if (!raw) return "";
+  let text = raw;
+  // Convert laughter / sighs to natural conversational sounds
+  text = text.replace(/(?:\*|\[|\()\s*(?:laughs|chuckles|giggles|laughter|laughing)\s*(?:\*|\]|\))/gi, " haha ");
+  text = text.replace(/(?:\*|\[|\()\s*(?:sighs|sighing|sigh)\s*(?:\*|\]|\))/gi, " ahh... ");
+  text = text.replace(/(?:\*|\[|\()\s*(?:clears throat|throat clearing)\s*(?:\*|\]|\))/gi, " ahem... ");
+  text = text.replace(/(?:\*|\[|\()\s*(?:yawns|yawning)\s*(?:\*|\]|\))/gi, " ");
+  // Strip any remaining asterisk action tags (*smiles*, *pauses*, *looks at you*)
+  text = text.replace(/\*[^*]+\*/g, " ");
+  // Strip bracketed emotion tags ([whispering], [calm], [warmly])
+  text = text.replace(/\[[^\]]+\]/g, " ");
+  // Strip parenthetical stage directions
+  text = text.replace(/\([^)]+\)/g, " ");
+  // Strip markdown formatting characters
+  text = text.replace(/[*_#`~>]/g, " ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
 export class VoicePlayer {
   private audioCtx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -75,7 +94,7 @@ export class VoicePlayer {
    * Queue a sentence for playback and begin prefetching its audio in the background.
    */
   public enqueue(sentence: string): void {
-    const text = sentence.trim();
+    const text = cleanSentence(sentence);
     if (!text) return;
 
     if (!this.abortController) {
@@ -224,13 +243,19 @@ export class VoicePlayer {
         return;
       }
 
-      this.options.onSentenceStart?.(text);
-      const utterance = new SpeechSynthesisUtterance(text);
+      const cleaned = cleanSentence(text);
+      if (!cleaned) {
+        resolve();
+        return;
+      }
+
+      this.options.onSentenceStart?.(cleaned);
+      const utterance = new SpeechSynthesisUtterance(cleaned);
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
 
       utterance.onend = () => {
-        this.options.onSentenceEnd?.(text);
+        this.options.onSentenceEnd?.(cleaned);
         resolve();
       };
 

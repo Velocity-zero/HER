@@ -58,7 +58,7 @@ import EmptyState from "@/components/chat/EmptyState";
 import ImageStudio from "@/components/chat/ImageStudio";
 import ModeSelector from "@/components/chat/ModeSelector";
 import AuthModal from "@/components/AuthModal";
-import EarbudModeModal from "@/components/chat/EarbudModeModal";
+import PhoneCallModal from "@/components/chat/PhoneCallModal";
 import { useVoicePlayer } from "@/lib/use-voice-player";
 import { useSpeechRecognition, type VoiceEmotion } from "@/lib/use-speech-recognition";
 import type { VoiceNoteMeta } from "@/components/chat/ChatInput";
@@ -558,8 +558,18 @@ export default function ChatPage() {
     if (speechRec.micPermission !== "granted") {
       speechRec.requestMicPermission().catch(() => {});
     }
-    setEarbudOpen((prev) => !prev);
-  }, [voicePlayer, speechRec]);
+    setEarbudOpen((prev) => {
+      const willOpen = !prev;
+      if (willOpen && messages.length <= 1) {
+        // Samantha greets on call pickup if starting a fresh conversation
+        const greetingText = messages[0]?.content || "Hey there. I'm right here.";
+        setTimeout(() => {
+          voicePlayer.speakText(greetingText);
+        }, 700);
+      }
+      return willOpen;
+    });
+  }, [voicePlayer, speechRec, messages]);
 
   /**
    * Fire-and-forget: extract memories from a set of messages and refresh context.
@@ -1448,7 +1458,12 @@ export default function ChatPage() {
             });
             if (ttsRes.ok) {
               const audioBlob = await ttsRes.blob();
-              const audioUrl = URL.createObjectURL(audioBlob);
+              // Convert blob to persistent base64 data URL so it survives reloads and database hydration
+              const reader = new FileReader();
+              const audioUrl = await new Promise<string>((resolve) => {
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.readAsDataURL(audioBlob);
+              });
               const durationSec = Math.max(2, Math.round(fullText.split(/\s+/).length * 0.38));
               setMessages((prev) =>
                 prev.map((m) =>
@@ -2262,8 +2277,8 @@ export default function ChatPage() {
         onCancelReply={cancelReply}
       />
 
-      {/* Earbud Mode Modal — Hands-free voice overlay */}
-      <EarbudModeModal
+      {/* Phone Call Modal — Hands-free voice call with Samantha */}
+      <PhoneCallModal
         isOpen={earbudOpen}
         onClose={() => setEarbudOpen(false)}
         messages={messages}

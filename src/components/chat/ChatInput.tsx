@@ -434,14 +434,14 @@ export default function ChatInput({
             </button>
           )}
 
-          {/* Earbud Voice mode toggle */}
+          {/* Phone Call Mode toggle */}
           {onToggleEarbud && (
             <button
               type="button"
               onClick={onToggleEarbud}
               disabled={disabled}
-              aria-label={earbudActive ? "Close voice mode" : "Open voice mode"}
-              title="Earbud Mode (Hands-free voice)"
+              aria-label={earbudActive ? "End call" : "Call Samantha"}
+              title="Call Samantha (Phone Call)"
               className={`mb-0.5 flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full transition-all duration-300 active:scale-[0.92] disabled:opacity-25 disabled:cursor-not-allowed sm:h-[44px] sm:w-[44px] ${
                 earbudActive
                   ? "bg-her-accent/[0.12] text-her-accent hover:bg-her-accent/[0.18]"
@@ -451,15 +451,10 @@ export default function ChatInput({
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                fill="currentColor"
                 className="h-[16px] w-[16px] sm:h-[17px] sm:w-[17px]"
               >
-                <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
-                <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+                <path fillRule="evenodd" d="M1.5 4.5a3 3 0 013-3h1.372c.86 0 1.61.586 1.819 1.42l1.105 4.423a1.875 1.875 0 01-.694 1.955l-1.293.97c-.135.101-.164.249-.126.352a11.285 11.285 0 006.697 6.697c.103.038.25.009.352-.126l.97-1.293a1.875 1.875 0 011.955-.694l4.423 1.105c.834.209 1.42.959 1.42 1.82V19.5a3 3 0 01-3 3h-2.25C8.552 22.5 1.5 15.448 1.5 6.75V4.5z" clipRule="evenodd" />
               </svg>
             </button>
           )}

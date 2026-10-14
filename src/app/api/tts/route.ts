@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { EdgeTTS } from "edge-tts-universal";
+import { spawn } from "node:child_process";
 import { processSpeechText } from "@/lib/voice-styles";
 
 export const runtime = "nodejs";
@@ -19,7 +19,6 @@ function getCacheKey(voice: string, rate: string, pitch: string, volume: string,
 function getFromCache(key: string): Uint8Array | null {
   const entry = audioCache.get(key);
   if (!entry) return null;
-  // Move to end for LRU behavior
   audioCache.delete(key);
   audioCache.set(key, entry);
   return entry.buffer;
@@ -34,7 +33,8 @@ function addToCache(key: string, buffer: Uint8Array): void {
 }
 
 /**
- * Strips markdown, URLs, code blocks, and emojis so synthesized speech sounds natural.
+ * Strips markdown, URLs, code blocks, emojis, and roleplay action tags (*laughs*, [whispering])
+ * so synthesized speech sounds completely natural without spelling out action directions.
  */
 export function cleanTextForSpeech(input: string): string {
   if (!input) return "";
@@ -48,8 +48,23 @@ export function cleanTextForSpeech(input: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     // Remove raw URLs
     .replace(/https?:\/\/\S+/g, "")
-    // Remove bold/italics
-    .replace(/(\*\*|\*|__|_)(.*?)\1/g, "$2")
+    // Convert bold to plain text first so bold names (**Samantha**) are preserved
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    // Convert human laughter and sighing cues to natural conversational spoken sounds
+    .replace(/(?:\*|\[|\()\s*(?:laughs|chuckles|giggles|laughter|laughing)\s*(?:\*|\]|\))/gi, " haha ")
+    .replace(/(?:\*|\[|\()\s*(?:sighs|sighing|sigh)\s*(?:\*|\]|\))/gi, " ahh... ")
+    .replace(/(?:\*|\[|\()\s*(?:clears throat|throat clearing)\s*(?:\*|\]|\))/gi, " ahem... ")
+    .replace(/(?:\*|\[|\()\s*(?:yawns|yawning)\s*(?:\*|\]|\))/gi, " ")
+    // Strip common roleplay action verbs in asterisks e.g. *smiles*, *pauses*, *looks away*, *softly giggles*
+    .replace(/\*\s*(?:smiles?|grins?|pauses?|blushes?|looks?|leans?|winks?|chuckles?|gasps?|sighs?|whispers?|nods?|gently|softly)[^*]*\*/gi, " ")
+    // Strip bracketed style tags ([whispering], [calm], [warmly])
+    .replace(/\[[^\]]+\]/g, " ")
+    // Strip parenthetical stage directions like (softly), (whispering), (gently)
+    .replace(/\((?:whispering|softly|gently|warmly|smiling|pause|laughing|calm|quietly|excited)\)/gi, " ")
+    // Convert remaining single asterisks (italics) to plain words
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
     // Remove markdown headers, list bullets, quotes at start of line
     .replace(/^[#>\s*-]+/gm, " ")
     // Remove emojis
@@ -80,6 +95,59 @@ export const ALLOWED_VOICES: Record<string, string> = {
 
 export const DEFAULT_VOICE = "en-US-AvaMultilingualNeural";
 export const FALLBACK_VOICE = "en-US-JennyNeural";
+
+/**
+ * Executes official edge-tts engine via child process streaming directly to buffer.
+ */
+async function runEdgeTTS(
+  text: string,
+  voice: string,
+  rate: string = "+0%",
+  pitch: string = "+0Hz",
+  volume: string = "+0%"
+): Promise<Uint8Array | null> {
+  return new Promise((resolve) => {
+    const args = [
+      "-m", "edge_tts",
+      "-v", voice,
+      "--rate", rate,
+      "--pitch", pitch,
+      "--volume", volume,
+      "-t", text,
+      "--no-progress",
+    ];
+    const proc = spawn("python", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    let errOutput = "";
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+
+    proc.stderr.on("data", (chunk: Buffer) => {
+      errOutput += chunk.toString();
+    });
+
+    proc.on("error", (err) => {
+      console.warn("[TTS Engine] Process spawn error:", err);
+      resolve(null);
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        console.warn("[TTS Engine] Process exited with code", code, errOutput);
+        resolve(null);
+        return;
+      }
+      const total = Buffer.concat(chunks);
+      if (total.length > 0) {
+        resolve(new Uint8Array(total));
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
 
 /**
  * POST /api/tts
@@ -135,26 +203,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Synthesize using primary voice
-    let audioBuffer: Uint8Array | null = null;
-    try {
-      const tts = new EdgeTTS(textToSynthesize, voice, { rate, pitch, volume });
-      const result = await tts.synthesize();
-      if (result && result.audio) {
-        audioBuffer = new Uint8Array(await result.audio.arrayBuffer());
-      }
-    } catch (primaryErr) {
-      console.warn(`[TTS] Primary voice (${voice}) failed, trying fallback (${FALLBACK_VOICE}):`, primaryErr);
-      if (voice !== FALLBACK_VOICE) {
-        try {
-          const fallbackTts = new EdgeTTS(textToSynthesize, FALLBACK_VOICE, { rate, pitch, volume });
-          const result = await fallbackTts.synthesize();
-          if (result && result.audio) {
-            audioBuffer = new Uint8Array(await result.audio.arrayBuffer());
-          }
-        } catch (fallbackErr) {
-          console.error("[TTS] Fallback voice also failed:", fallbackErr);
-        }
-      }
+    let audioBuffer = await runEdgeTTS(textToSynthesize, voice, rate, pitch, volume);
+    if (!audioBuffer && voice !== FALLBACK_VOICE) {
+      console.warn(`[TTS] Primary voice (${voice}) failed, trying fallback (${FALLBACK_VOICE})`);
+      audioBuffer = await runEdgeTTS(textToSynthesize, FALLBACK_VOICE, rate, pitch, volume);
     }
 
     if (!audioBuffer || audioBuffer.byteLength === 0) {
@@ -183,3 +235,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

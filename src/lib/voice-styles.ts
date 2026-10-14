@@ -166,20 +166,46 @@ export function processSpeechText(
  * Server-side TTS synthesis for notification voice notes and background audio generation.
  * Generates an MP3 data URI or buffer representation with emotional prosody.
  */
+/**
+ * Server-side TTS synthesis for notification voice notes and background audio generation.
+ * Generates an MP3 data URI representation with emotional prosody.
+ */
 export async function synthesizeVoiceNoteAudio(
   text: string,
   preferredVoice: string = "en-US-AvaMultilingualNeural"
 ): Promise<{ audioUrl: string; duration: number } | null> {
   try {
-    const { EdgeTTS } = await import("edge-tts-universal");
     const { cleanText, rate, pitch, volume } = processSpeechText(text);
     if (!cleanText) return null;
 
-    const tts = new EdgeTTS(cleanText, preferredVoice, { rate, pitch, volume });
-    const result = await tts.synthesize();
-    if (!result?.audio) return null;
+    const { spawn } = await import("node:child_process");
 
-    const buffer = Buffer.from(await result.audio.arrayBuffer());
+    const buffer = await new Promise<Buffer | null>((resolve) => {
+      const args = [
+        "-m", "edge_tts",
+        "-v", preferredVoice,
+        "--rate", rate,
+        "--pitch", pitch,
+        "--volume", volume,
+        "-t", cleanText,
+        "--no-progress",
+      ];
+      const proc = spawn("python", args, { stdio: ["ignore", "pipe", "pipe"] });
+      const chunks: Buffer[] = [];
+
+      proc.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+      proc.on("error", () => resolve(null));
+      proc.on("close", (code) => {
+        if (code !== 0 || chunks.length === 0) {
+          resolve(null);
+        } else {
+          resolve(Buffer.concat(chunks));
+        }
+      });
+    });
+
+    if (!buffer) return null;
+
     const base64 = buffer.toString("base64");
     const audioUrl = `data:audio/mpeg;base64,${base64}`;
     const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
@@ -190,4 +216,5 @@ export async function synthesizeVoiceNoteAudio(
     return null;
   }
 }
+
 
