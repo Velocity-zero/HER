@@ -4,10 +4,7 @@ import subprocess
 import speech_recognition as sr
 
 def convert_to_wav(raw_bytes: bytes) -> bytes:
-    # If already a valid WAV file (starts with RIFF), return directly
-    if raw_bytes.startswith(b"RIFF"):
-        return raw_bytes
-    # Use ffmpeg to convert any WebM/Opus/MP4/OGG buffer to 16kHz Mono WAV in memory
+    # Use ffmpeg to convert any WebM/Opus/MP4/OGG/WAV buffer to 16kHz Mono WAV in memory
     try:
         proc = subprocess.Popen(
             ["ffmpeg", "-y", "-i", "pipe:0", "-f", "wav", "-ar", "16000", "-ac", "1", "pipe:1"],

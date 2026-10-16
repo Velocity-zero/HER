@@ -482,6 +482,12 @@ export default function PhoneCallModal({
                   Send ↵
                 </button>
               </div>
+            ) : isUserSpeaking ? (
+              <div className="flex flex-col items-center gap-1.5 animate-in fade-in">
+                <p className="text-base sm:text-lg font-normal text-[#F2B5A5] leading-relaxed animate-pulse">
+                  listening to you…
+                </p>
+              </div>
             ) : isListening && !isMuted ? (
               <p className="text-xs sm:text-sm font-light text-white/40 tracking-wide">
                 speak freely · Samantha is listening
