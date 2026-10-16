@@ -17,6 +17,7 @@ export interface VoicePlayerOptions {
   onSentenceStart?: (sentence: string) => void;
   onSentenceEnd?: (sentence: string) => void;
   onPlaybackEnd?: () => void;
+  onBusyStateChange?: (isBusy: boolean) => void;
   onError?: (error: Error) => void;
 }
 
@@ -82,12 +83,20 @@ export class VoicePlayer {
 
   /**
    * Explicitly unlock/resume AudioContext on a user click/gesture.
+   * Plays a 1-sample silent buffer to force mobile browser audio pipeline permanently open.
    */
   public async unlockAudio(): Promise<void> {
     const ctx = this.initAudioContext();
     if (ctx.state === "suspended") {
       await ctx.resume().catch(() => {});
     }
+    try {
+      const silentBuffer = ctx.createBuffer(1, 1, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = silentBuffer;
+      source.connect(ctx.destination);
+      source.start(0);
+    } catch {}
   }
 
   /**
@@ -100,6 +109,8 @@ export class VoicePlayer {
     if (!this.abortController) {
       this.abortController = new AbortController();
     }
+
+    this.options.onBusyStateChange?.(true);
 
     const item: QueuedItem = {
       id: Math.random().toString(36).substring(2, 9),
@@ -198,6 +209,7 @@ export class VoicePlayer {
     this.currentSource = null;
 
     if (this.queue.length === 0) {
+      this.options.onBusyStateChange?.(false);
       this.options.onPlaybackEnd?.();
     }
   }
@@ -286,9 +298,14 @@ export class VoicePlayer {
 
     this.queue = [];
     this.isPlaying = false;
+    this.options.onBusyStateChange?.(false);
   }
 
   public getIsPlaying(): boolean {
     return this.isPlaying;
+  }
+
+  public isBusy(): boolean {
+    return this.isPlaying || this.queue.length > 0;
   }
 }

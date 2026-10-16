@@ -81,6 +81,7 @@ interface PhoneCallModalProps {
   startListening?: () => void;
   stopListening?: () => void;
   submitTranscript?: () => void;
+  unlockAudio?: () => void;
   getMicVolume?: () => number;
 }
 
@@ -97,6 +98,7 @@ export default function PhoneCallModal({
   onChangeVoice,
   stopVoice,
   getVoiceVolume,
+  unlockAudio,
   isListening = false,
   isUserSpeaking = false,
   userTranscript = "",
@@ -123,6 +125,7 @@ export default function PhoneCallModal({
   // Manage call connection & timer lifecycle
   useEffect(() => {
     if (isOpen) {
+      unlockAudio?.();
       setIsMuted(false);
       setCallDuration(0);
       setCallStatus("connecting");
@@ -183,12 +186,13 @@ export default function PhoneCallModal({
 
   // Handle tap anywhere on background/aura to interrupt Samantha or wake mic
   const handleTapToInterrupt = useCallback(() => {
+    unlockAudio?.();
     if (isPlayingVoice) {
       stopVoice();
     } else if (!isListening && !isMuted) {
       startListening?.();
     }
-  }, [isPlayingVoice, stopVoice, isListening, isMuted, startListening]);
+  }, [unlockAudio, isPlayingVoice, stopVoice, isListening, isMuted, startListening]);
 
   // Keyboard shortcuts: Escape to end call, Space to mute/unmute or interrupt
   useEffect(() => {
@@ -237,61 +241,72 @@ export default function PhoneCallModal({
 
   const handleSelectVoice = useCallback(
     (voiceId: string) => {
+      unlockAudio?.();
       onChangeVoice(voiceId);
       setShowVoiceSelect(false);
       if (previewAudioRef.current) {
         previewAudioRef.current.pause();
+        previewAudioRef.current.currentTime = 0;
         previewAudioRef.current = null;
       }
       setPreviewingVoice(null);
     },
-    [onChangeVoice]
+    [onChangeVoice, unlockAudio]
   );
 
   const handlePreviewVoice = useCallback(
-    async (e: React.MouseEvent, voice: CallVoice) => {
+    (e: React.MouseEvent, voice: CallVoice) => {
       e.stopPropagation();
+      e.preventDefault();
+      unlockAudio?.();
+
+      // If already playing this voice, stop it
       if (previewingVoice === voice.id) {
         if (previewAudioRef.current) {
           previewAudioRef.current.pause();
+          previewAudioRef.current.currentTime = 0;
           previewAudioRef.current = null;
         }
         setPreviewingVoice(null);
         return;
       }
 
+      // Stop any previously playing preview
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current.currentTime = 0;
+        previewAudioRef.current = null;
+      }
+
       setPreviewingVoice(voice.id);
-      try {
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: voice.previewText,
-            voice: voice.id,
-          }),
+
+      // Play pre-generated static preview MP3 synchronously inside user tap gesture
+      const voiceKey = voice.name.toLowerCase();
+      const audioUrl = `/audio/previews/${voiceKey}.mp3`;
+      const audio = new Audio(audioUrl);
+      previewAudioRef.current = audio;
+
+      audio.onended = () => {
+        setPreviewingVoice((curr) => (curr === voice.id ? null : curr));
+        previewAudioRef.current = null;
+      };
+
+      audio.onerror = (err) => {
+        console.warn("[VoicePreview] Playback failed for", voiceKey, err);
+        setPreviewingVoice((curr) => (curr === voice.id ? null : curr));
+        previewAudioRef.current = null;
+      };
+
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch((err) => {
+          console.warn("[VoicePreview] play() rejected:", err);
+          setPreviewingVoice((curr) => (curr === voice.id ? null : curr));
+          previewAudioRef.current = null;
         });
-        if (res.ok) {
-          const blob = await res.blob();
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          previewAudioRef.current = audio;
-          audio.onended = () => {
-            setPreviewingVoice(null);
-            URL.revokeObjectURL(url);
-          };
-          audio.onerror = () => {
-            setPreviewingVoice(null);
-            URL.revokeObjectURL(url);
-          };
-          await audio.play();
-        } else {
-          setPreviewingVoice(null);
-        }
-      } catch {
-        setPreviewingVoice(null);
       }
     },
-    [previewingVoice]
+    [previewingVoice, unlockAudio]
   );
 
   // Active voice display name
@@ -368,6 +383,7 @@ export default function PhoneCallModal({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              unlockAudio?.();
               setShowVoiceSelect(true);
             }}
             className="flex items-center gap-1.5 rounded-full bg-white/10 border border-white/20 px-3 py-1.5 text-xs text-white hover:bg-white/15 active:scale-95 transition-all shadow-sm"

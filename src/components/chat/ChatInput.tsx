@@ -156,14 +156,30 @@ export default function ChatInput({
     }
 
     const duration = Math.max(1, recordingSeconds);
-    const capturedTranscript = voiceTranscriptRef.current;
 
-    mr.onstop = () => {
+    mr.onstop = async () => {
       const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || "audio/webm" });
+      
+      // Transcribe audio silently via server-side /api/stt without browser search chimes
+      let transcriptText = "🎙️ Voice message";
+      try {
+        const sttRes = await fetch("/api/stt", {
+          method: "POST",
+          headers: { "Content-Type": mr.mimeType || "audio/webm" },
+          body: blob,
+        });
+        if (sttRes.ok) {
+          const sttData = await sttRes.json();
+          if (sttData.transcript && sttData.transcript.trim()) {
+            transcriptText = sttData.transcript.trim();
+          }
+        }
+      } catch {}
+
       const reader = new FileReader();
       reader.onloadend = () => {
         const dataUrl = reader.result as string;
-        onSend(capturedTranscript || "🎙️ Voice message", undefined, {
+        onSend(transcriptText, undefined, {
           audioUrl: dataUrl,
           audioDuration: duration,
           isVoiceNote: true,
@@ -203,23 +219,6 @@ export default function ChatInput({
       } catch {}
 
       voiceTranscriptRef.current = "";
-      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRec) {
-        try {
-          const rec = new SpeechRec();
-          rec.continuous = true;
-          rec.interimResults = true;
-          rec.onresult = (ev: any) => {
-            let str = "";
-            for (let i = 0; i < ev.results.length; i++) {
-              if (ev.results[i][0]) str += ev.results[i][0].transcript + " ";
-            }
-            voiceTranscriptRef.current = str.trim();
-          };
-          rec.start();
-          recognitionRef.current = rec;
-        } catch {}
-      }
 
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"

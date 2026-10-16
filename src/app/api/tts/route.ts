@@ -156,7 +156,7 @@ async function runEdgeTTS(
           proc.kill();
         } catch {}
         resolve(null);
-      }, 9000);
+      }, 30000);
 
       proc.stdout.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
@@ -245,7 +245,41 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Synthesize using primary voice
+    // 1. Try local persistent fast TTS server first if available
+    try {
+      const fastRes = await fetch("http://127.0.0.1:5055/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: textToSynthesize,
+          voice,
+          rate,
+          pitch,
+          volume,
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+
+      if (fastRes.ok) {
+        const ab = await fastRes.arrayBuffer();
+        if (ab.byteLength > 0) {
+          const u8 = new Uint8Array(ab);
+          addToCache(cacheKey, u8);
+          return new Response(u8 as unknown as BodyInit, {
+            status: 200,
+            headers: {
+              "Content-Type": "audio/mpeg",
+              "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+              "X-Audio-Cache": "FAST-SERVER",
+            },
+          });
+        }
+      }
+    } catch {
+      // Persistent server unavailable, fall back to direct spawn
+    }
+
+    // 2. Synthesize using primary voice via child process
     let audioBuffer = await runEdgeTTS(textToSynthesize, voice, rate, pitch, volume);
     if (!audioBuffer && voice !== FALLBACK_VOICE) {
       console.warn(`[TTS] Primary voice (${voice}) failed, trying fallback (${FALLBACK_VOICE})`);

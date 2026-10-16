@@ -539,7 +539,7 @@ export default function ChatPage() {
   const lastDetectedVoiceEmotionRef = useRef<VoiceEmotion | undefined>(undefined);
 
   const speechRec = useSpeechRecognition({
-    isPlaybackActive: voicePlayer.isPlaying || isStreaming,
+    isPlaybackActive: voicePlayer.isPlaying || voicePlayer.isSynthesizing || isStreaming || isTyping,
     onFinalTranscript: (text, emotion) => {
       if (emotion) {
         lastDetectedVoiceEmotionRef.current = emotion;
@@ -561,6 +561,7 @@ export default function ChatPage() {
     voicePlayer.unlockAudio();
     setEarbudOpen((prev) => {
       const willOpen = !prev;
+      earbudOpenRef.current = willOpen;
       if (willOpen) {
         speechRec.startListening();
         if (messages.length <= 1) {
@@ -2299,6 +2300,7 @@ export default function ChatPage() {
         stopVoice={voicePlayer.stopSpeaking}
         onSpeakText={(text) => handleSpeakMessage("replay", text)}
         getVoiceVolume={voicePlayer.getVolume}
+        unlockAudio={voicePlayer.unlockAudio}
         isListening={speechRec.isListening}
         isUserSpeaking={speechRec.isUserSpeaking}
         userTranscript={speechRec.transcript}

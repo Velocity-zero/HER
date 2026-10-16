@@ -12,6 +12,7 @@ export interface UseVoicePlayerOptions {
 
 export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [currentSentence, setCurrentSentence] = useState("");
   const [selectedVoice, setSelectedVoiceState] = useState(() => {
     if (typeof window !== "undefined") {
@@ -40,6 +41,7 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
       voice: selectedVoice,
       onSentenceStart: (sentence) => {
         setIsPlaying(true);
+        setIsSynthesizing(true);
         setCurrentSentence(sentence);
         options.onSentenceStart?.(sentence);
       },
@@ -48,8 +50,12 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
       },
       onPlaybackEnd: () => {
         setIsPlaying(false);
+        setIsSynthesizing(false);
         setCurrentSentence("");
         options.onPlaybackEnd?.();
+      },
+      onBusyStateChange: (busy) => {
+        setIsSynthesizing(busy);
       },
     });
 
@@ -76,6 +82,7 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
    * Feed a chunk of streamed text from LLM response.
    */
   const feedChunk = useCallback((token: string) => {
+    setIsSynthesizing(true);
     chunkerRef.current?.push(token);
   }, []);
 
@@ -93,6 +100,7 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
     chunkerRef.current?.reset();
     playerRef.current?.stop();
     setIsPlaying(false);
+    setIsSynthesizing(false);
     setCurrentSentence("");
   }, []);
 
@@ -103,6 +111,7 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
     stopSpeaking();
     if (!text.trim()) return;
 
+    setIsSynthesizing(true);
     // Split text into sentences using chunker
     const chunker = new SentenceChunker((sentence) => {
       playerRef.current?.enqueue(sentence);
@@ -134,6 +143,7 @@ export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
 
   return {
     isPlaying,
+    isSynthesizing,
     currentSentence,
     selectedVoice,
     setSelectedVoice,
