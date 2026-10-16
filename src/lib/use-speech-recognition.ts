@@ -402,16 +402,27 @@ export function useSpeechRecognition({
           isStartingRef.current = false;
           recognitionRef.current = null;
 
-          // If speech was captured, submit it and finish dictation cleanly without looping chimes
+          // If speech was captured, submit it
           const accumulated = (finalTranscriptAccumulatorRef.current + " " + transcript).trim();
           if (accumulated) {
             submitTranscript();
-            shouldListenRef.current = false;
           }
 
-          setIsListening(false);
-          setIsUserSpeaking(false);
-          isUserSpeakingRef.current = false;
+          // In phone call mode: keep connection alive smoothly
+          if (shouldListenRef.current && consecutiveErrorsRef.current < 4) {
+            const restartDelay = isAndroid ? 450 : 250;
+            setTimeout(() => {
+              if (shouldListenRef.current && !recognitionRef.current) {
+                try {
+                  startListening();
+                } catch {}
+              }
+            }, restartDelay);
+          } else {
+            setIsListening(false);
+            setIsUserSpeaking(false);
+            isUserSpeakingRef.current = false;
+          }
         };
 
         recognitionRef.current = recognition;

@@ -525,6 +525,10 @@ export default function ChatPage() {
   const voicePlayer = useVoicePlayer({
     onPlaybackEnd: () => {
       setSpeakingMessageId(null);
+      // When Samantha finishes speaking during a call, ensure microphone is listening for user's reply
+      if (earbudOpenRef.current && speechRecRef.current) {
+        speechRecRef.current.startListening();
+      }
     },
   });
   const voicePlayerRef = useRef(voicePlayer);
@@ -555,17 +559,19 @@ export default function ChatPage() {
 
   const toggleEarbud = useCallback(() => {
     voicePlayer.unlockAudio();
-    // Stop webkitSpeechRecognition so it never triggers search chimes or conflicts with phone call audio
-    speechRec.stopListening();
     setEarbudOpen((prev) => {
       const willOpen = !prev;
-      if (willOpen && messages.length <= 1) {
-        // Samantha greets on call pickup if starting a fresh conversation
-        const greetingText = messages[0]?.content || "Hey there. I'm right here.";
-        setTimeout(() => {
-          voicePlayer.speakText(greetingText);
-        }, 700);
-      } else if (!willOpen) {
+      if (willOpen) {
+        speechRec.startListening();
+        if (messages.length <= 1) {
+          // Samantha greets on call pickup if starting a fresh conversation
+          const greetingText = messages[0]?.content || "Hey there. I'm right here.";
+          setTimeout(() => {
+            voicePlayer.speakText(greetingText);
+          }, 700);
+        }
+      } else {
+        speechRec.stopListening();
         voicePlayer.stopSpeaking();
       }
       return willOpen;
