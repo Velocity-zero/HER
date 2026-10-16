@@ -185,6 +185,29 @@ const OPENING_SUBTEXT_POOL = [
 // ── Bundle Generator ────────────────────────────────────────
 
 /**
+ * Creates a deterministic baseline bundle for SSR and initial client hydration.
+ * Ensures server HTML and client initial render match 100% with zero hydration mismatches.
+ */
+export function getBaselineSurfaceCopyBundle(): SurfaceCopyBundle {
+  return {
+    greeting: NEW_GREETING_POOL[0],
+    starterPrompts: [
+      STARTER_PROMPT_POOL[0],
+      STARTER_PROMPT_POOL[1],
+      STARTER_PROMPT_POOL[2],
+      STARTER_PROMPT_POOL[3],
+    ],
+    thinkingLabel: THINKING_LABEL_POOL[0],
+    replyingLabel: REPLYING_LABEL_POOL[0],
+    imageGeneratingLabel: IMAGE_GENERATING_LABEL_POOL[0],
+    imageEditingLabel: IMAGE_EDITING_LABEL_POOL[0],
+    studioPlaceholder: STUDIO_PLACEHOLDER_POOL[0],
+    openingLine: OPENING_LINE_POOL[0],
+    openingSubtext: OPENING_SUBTEXT_POOL[0],
+  };
+}
+
+/**
  * Creates a fresh SurfaceCopyBundle with random selections.
  * Call this once on app load and once per New Chat — store the result.
  * Pass rapportLevel to pick rapport-appropriate greetings.

@@ -54,12 +54,18 @@ export default function EmptyState({ onSuggestion, suggestions, openingLine, ope
       <div className="animate-breathe mb-8 h-[9px] w-[9px] rounded-full bg-her-accent/35 shadow-[0_0_20px_4px_rgba(201,110,90,0.08)] sm:mb-10" />
 
       {/* Opening line */}
-      <p className="mb-1.5 font-light tracking-[0.14em] text-her-text/45 text-[15px] sm:text-[16px]">
+      <p
+        className="mb-1.5 font-light tracking-[0.14em] text-her-text/45 text-[15px] sm:text-[16px]"
+        suppressHydrationWarning
+      >
         {headline}
       </p>
 
       {/* Subtext */}
-      <p className="mb-10 font-light tracking-[0.04em] text-her-text-muted/28 text-[11px] sm:mb-12 sm:text-[12px]">
+      <p
+        className="mb-10 font-light tracking-[0.04em] text-her-text-muted/28 text-[11px] sm:mb-12 sm:text-[12px]"
+        suppressHydrationWarning
+      >
         {subtext}
       </p>
 

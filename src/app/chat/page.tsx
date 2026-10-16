@@ -11,7 +11,12 @@ import {
   loadConversationGreeting,
   clearConversationGreeting,
 } from "@/lib/chat-store";
-import { createSurfaceCopyBundle, GREETING_POOL, type SurfaceCopyBundle } from "@/lib/surface-copy";
+import {
+  createSurfaceCopyBundle,
+  getBaselineSurfaceCopyBundle,
+  GREETING_POOL,
+  type SurfaceCopyBundle,
+} from "@/lib/surface-copy";
 import { buildContinuity, buildContinuityBlock } from "@/lib/continuity";
 import { analyzeInteractionPattern, saveInteractionPattern } from "@/lib/interaction-patterns";
 import { selectResponseMode } from "@/lib/response-mode";
@@ -437,7 +442,8 @@ export default function ChatPage() {
   accessTokenRef.current = session?.access_token ?? null;
 
   // ── Surface copy bundle (session-stable, regenerates on New Chat) ──
-  const [surfaceCopy, setSurfaceCopy] = useState<SurfaceCopyBundle>(() => createSurfaceCopyBundle());
+  // Baseline bundle ensures deterministic SSR output and 100% hydration match
+  const [surfaceCopy, setSurfaceCopy] = useState<SurfaceCopyBundle>(getBaselineSurfaceCopyBundle);
 
   // ── Core chat state ──
   // Initial greeting uses the first pool item for SSR stability — overwritten by hydration useEffect
@@ -702,10 +708,12 @@ export default function ChatPage() {
 
   useEffect(() => {
     const saved = loadSession();
+    const freshCopy = createSurfaceCopyBundle(rapportLevel);
+    setSurfaceCopy(freshCopy);
     if (saved && saved.messages.length > 0) {
       setMessages(saved.messages);
     } else {
-      setMessages([createGreeting(surfaceCopy.greeting)]);
+      setMessages([createGreeting(freshCopy.greeting)]);
     }
     setHydrated(true);
 
