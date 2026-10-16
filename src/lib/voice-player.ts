@@ -118,8 +118,9 @@ export class VoicePlayer {
 
   /**
    * Fetches audio buffer from /api/tts and decodes via Web Audio API.
+   * Automatically retries once on transient network/WebSocket drops.
    */
-  private async fetchAndDecodeAudio(text: string, signal: AbortSignal): Promise<AudioBuffer | null> {
+  private async fetchAndDecodeAudio(text: string, signal: AbortSignal, retryCount = 0): Promise<AudioBuffer | null> {
     try {
       const res = await fetch("/api/tts", {
         method: "POST",
@@ -146,7 +147,11 @@ export class VoicePlayer {
       if ((err as Error)?.name === "AbortError") {
         return null;
       }
-      console.warn("[VoicePlayer] Edge TTS fetch failed, will fallback if needed:", err);
+      if (retryCount < 1 && !signal.aborted) {
+        await new Promise((r) => setTimeout(r, 300));
+        return this.fetchAndDecodeAudio(text, signal, retryCount + 1);
+      }
+      console.warn("[VoicePlayer] Neural TTS fetch failed:", err);
       return null;
     }
   }
@@ -178,8 +183,8 @@ export class VoicePlayer {
           await this.playBuffer(buffer);
           this.options.onSentenceEnd?.(current.text);
         } else {
-          // Edge TTS failed — fallback to browser SpeechSynthesis for this sentence
-          await this.playFallbackSpeech(current.text);
+          // Never fall back to decade-old robotic OS voices (SAPI5)
+          console.warn("[VoicePlayer] Skipping unrendered sentence:", current.text);
         }
       } catch (playErr) {
         console.error("[VoicePlayer] Playback error:", playErr);
@@ -230,40 +235,6 @@ export class VoicePlayer {
         console.warn("[VoicePlayer] Source start failed:", err);
         resolve();
       }
-    });
-  }
-
-  /**
-   * Fallback using browser SpeechSynthesis if edge-tts is unavailable.
-   */
-  private playFallbackSpeech(text: string): Promise<void> {
-    return new Promise((resolve) => {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-        resolve();
-        return;
-      }
-
-      const cleaned = cleanSentence(text);
-      if (!cleaned) {
-        resolve();
-        return;
-      }
-
-      this.options.onSentenceStart?.(cleaned);
-      const utterance = new SpeechSynthesisUtterance(cleaned);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-
-      utterance.onend = () => {
-        this.options.onSentenceEnd?.(cleaned);
-        resolve();
-      };
-
-      utterance.onerror = () => {
-        resolve();
-      };
-
-      window.speechSynthesis.speak(utterance);
     });
   }
 

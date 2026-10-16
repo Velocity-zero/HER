@@ -83,18 +83,47 @@ export function cleanTextForSpeech(input: string): string {
 export const ALLOWED_VOICES: Record<string, string> = {
   "ava": "en-US-AvaMultilingualNeural",
   "jenny": "en-US-JennyNeural",
-  "emma": "en-US-EmmaNeural",
+  "emma": "en-US-EmmaMultilingualNeural",
   "aria": "en-US-AriaNeural",
+  "sonia": "en-GB-SoniaNeural",
   "brian": "en-US-BrianMultilingualNeural",
+  "andrew": "en-US-AndrewMultilingualNeural",
   "en-US-AvaMultilingualNeural": "en-US-AvaMultilingualNeural",
   "en-US-JennyNeural": "en-US-JennyNeural",
-  "en-US-EmmaNeural": "en-US-EmmaNeural",
+  "en-US-EmmaMultilingualNeural": "en-US-EmmaMultilingualNeural",
+  "en-US-EmmaNeural": "en-US-EmmaMultilingualNeural",
   "en-US-AriaNeural": "en-US-AriaNeural",
+  "en-GB-SoniaNeural": "en-GB-SoniaNeural",
   "en-US-BrianMultilingualNeural": "en-US-BrianMultilingualNeural",
+  "en-US-AndrewMultilingualNeural": "en-US-AndrewMultilingualNeural",
 };
 
 export const DEFAULT_VOICE = "en-US-AvaMultilingualNeural";
 export const FALLBACK_VOICE = "en-US-JennyNeural";
+
+// Concurrency queue to prevent hammering Microsoft Bing TTS WebSockets with parallel spawns
+let activeTTSProcesses = 0;
+const MAX_CONCURRENT_TTS = 2;
+const ttsWaitQueue: (() => void)[] = [];
+
+function acquireTTSSlot(): Promise<void> {
+  if (activeTTSProcesses < MAX_CONCURRENT_TTS) {
+    activeTTSProcesses++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    ttsWaitQueue.push(resolve);
+  });
+}
+
+function releaseTTSSlot(): void {
+  activeTTSProcesses--;
+  const next = ttsWaitQueue.shift();
+  if (next) {
+    activeTTSProcesses++;
+    next();
+  }
+}
 
 /**
  * Executes official edge-tts engine via child process streaming directly to buffer.
@@ -106,47 +135,61 @@ async function runEdgeTTS(
   pitch: string = "+0Hz",
   volume: string = "+0%"
 ): Promise<Uint8Array | null> {
-  return new Promise((resolve) => {
-    const args = [
-      "-m", "edge_tts",
-      "-v", voice,
-      "--rate", rate,
-      "--pitch", pitch,
-      "--volume", volume,
-      "-t", text,
-      "--no-progress",
-    ];
-    const proc = spawn("python", args, { stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
-    let errOutput = "";
+  await acquireTTSSlot();
+  try {
+    return await new Promise<Uint8Array | null>((resolve) => {
+      const args = [
+        "-m", "edge_tts",
+        "-v", voice,
+        "--rate", rate,
+        "--pitch", pitch,
+        "--volume", volume,
+        "-t", text,
+        "--no-progress",
+      ];
+      const proc = spawn("python", args, { stdio: ["ignore", "pipe", "pipe"] });
+      const chunks: Buffer[] = [];
+      let errOutput = "";
 
-    proc.stdout.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
-
-    proc.stderr.on("data", (chunk: Buffer) => {
-      errOutput += chunk.toString();
-    });
-
-    proc.on("error", (err) => {
-      console.warn("[TTS Engine] Process spawn error:", err);
-      resolve(null);
-    });
-
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        console.warn("[TTS Engine] Process exited with code", code, errOutput);
+      const timer = setTimeout(() => {
+        try {
+          proc.kill();
+        } catch {}
         resolve(null);
-        return;
-      }
-      const total = Buffer.concat(chunks);
-      if (total.length > 0) {
-        resolve(new Uint8Array(total));
-      } else {
+      }, 9000);
+
+      proc.stdout.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+
+      proc.stderr.on("data", (chunk: Buffer) => {
+        errOutput += chunk.toString();
+      });
+
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        console.warn("[TTS Engine] Process spawn error:", err);
         resolve(null);
-      }
+      });
+
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code !== 0) {
+          console.warn("[TTS Engine] Process exited with code", code, errOutput);
+          resolve(null);
+          return;
+        }
+        const total = Buffer.concat(chunks);
+        if (total.length > 0) {
+          resolve(new Uint8Array(total));
+        } else {
+          resolve(null);
+        }
+      });
     });
-  });
+  } finally {
+    releaseTTSSlot();
+  }
 }
 
 /**

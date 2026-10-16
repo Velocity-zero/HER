@@ -2,8 +2,62 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import AudioAura, { AuraState } from "./AudioAura";
+import { usePhoneAudio } from "@/lib/use-phone-audio";
 import type { Message } from "@/lib/types";
 import type { MicPermissionState } from "@/lib/use-speech-recognition";
+
+export interface CallVoice {
+  id: string;
+  name: string;
+  label: string;
+  description: string;
+  previewText: string;
+}
+
+export const CALL_VOICES: CallVoice[] = [
+  {
+    id: "en-US-AvaMultilingualNeural",
+    name: "Ava",
+    label: "Ava (Neural)",
+    description: "Warm, intimate, breathy & emotionally expressive (HER)",
+    previewText: "Hey Theodore, I was just thinking about you.",
+  },
+  {
+    id: "en-US-EmmaMultilingualNeural",
+    name: "Emma",
+    label: "Emma (Neural)",
+    description: "Bright, cheerful, natural & upbeat conversational",
+    previewText: "Hi! It's so lovely talking with you today.",
+  },
+  {
+    id: "en-US-JennyNeural",
+    name: "Jenny",
+    label: "Jenny (Neural)",
+    description: "Gentle, calm, soothing & clear companion",
+    previewText: "I'm right here with you. Take your time.",
+  },
+  {
+    id: "en-US-AriaNeural",
+    name: "Aria",
+    label: "Aria (Neural)",
+    description: "Expressive, confident, lively & engaging",
+    previewText: "That's fascinating! Tell me more about that.",
+  },
+  {
+    id: "en-GB-SoniaNeural",
+    name: "Sonia",
+    label: "Sonia (Neural)",
+    description: "Warm British accent, elegant & thoughtful",
+    previewText: "Hello there. Wonderful to hear your voice.",
+  },
+  {
+    id: "en-US-BrianMultilingualNeural",
+    name: "Brian",
+    label: "Brian (Neural)",
+    description: "Deep, relaxed, warm & sincere (Male Companion)",
+    previewText: "Hey, I'm glad you called. How are you doing today?",
+  },
+];
 
 interface PhoneCallModalProps {
   isOpen: boolean;
@@ -19,16 +73,17 @@ interface PhoneCallModalProps {
   stopVoice: () => void;
   onSpeakText?: (text: string) => void;
   getVoiceVolume: () => number;
-  isListening: boolean;
-  isUserSpeaking: boolean;
-  userTranscript: string;
-  micPermission: MicPermissionState;
-  errorMessage: string | null;
+  // Optional fallback props from parent
+  isListening?: boolean;
+  isUserSpeaking?: boolean;
+  userTranscript?: string;
+  micPermission?: MicPermissionState;
+  errorMessage?: string | null;
   onRequestMicPermission?: () => Promise<boolean>;
-  startListening: () => void;
-  stopListening: () => void;
-  submitTranscript: () => void;
-  getMicVolume: () => number;
+  startListening?: () => void;
+  stopListening?: () => void;
+  submitTranscript?: () => void;
+  getMicVolume?: () => number;
 }
 
 export default function PhoneCallModal({
@@ -43,50 +98,63 @@ export default function PhoneCallModal({
   selectedVoice,
   onChangeVoice,
   stopVoice,
-  onSpeakText,
   getVoiceVolume,
-  isListening,
-  isUserSpeaking,
-  userTranscript,
-  micPermission,
-  errorMessage,
-  onRequestMicPermission,
-  startListening,
-  stopListening,
-  submitTranscript,
-  getMicVolume,
 }: PhoneCallModalProps) {
-  const [isMuted, setIsMuted] = useState(false);
   const [showVoiceSelect, setShowVoiceSelect] = useState(false);
   const [showCaptions, setShowCaptions] = useState(true);
   const [showKeypad, setShowKeypad] = useState(false);
   const [textInput, setTextInput] = useState("");
   const [callDuration, setCallDuration] = useState(0);
   const [callStatus, setCallStatus] = useState<"connecting" | "connected">("connecting");
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
 
   const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Full-duplex silent microphone engine — zero Chrome voice search chimes/bleeps!
+  const phoneAudio = usePhoneAudio({
+    silenceTimeoutMs: 1100,
+    isPlayingVoice,
+    onSpeechStart: stopVoice,
+    onFinalTranscript: (text) => {
+      const clean = text.trim();
+      if (clean) {
+        onSendMessage(clean);
+      }
+    },
+  });
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    if (!showVoiceSelect) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowVoiceSelect(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showVoiceSelect]);
 
   // Manage call connection & timer lifecycle
   useEffect(() => {
     if (isOpen) {
-      setIsMuted(false);
       setCallDuration(0);
       setCallStatus("connecting");
 
       // Short connection ramp (400ms) to feel like a real phone call connecting
       const connTimer = setTimeout(() => {
         setCallStatus("connected");
-      }, 500);
+      }, 400);
 
       // Start duration counter
       durationTimerRef.current = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
 
-      // Start microphone ONCE on call connect
-      if (micPermission === "granted") {
-        startListening();
-      }
+      // Start silent microphone stream (zero chimes)
+      phoneAudio.startListening();
 
       return () => {
         clearTimeout(connTimer);
@@ -99,10 +167,15 @@ export default function PhoneCallModal({
         clearInterval(durationTimerRef.current);
         durationTimerRef.current = null;
       }
-      stopListening();
+      phoneAudio.stopListening();
       stopVoice();
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+      setPreviewingVoice(null);
     }
-  }, [isOpen]); // NOTE: Intentionally not depending on startListening to prevent multiple calls!
+  }, [isOpen]);
 
   // Format call duration MM:SS
   const formatDuration = (totalSeconds: number): string => {
@@ -117,7 +190,7 @@ export default function PhoneCallModal({
     auraState = "speaking";
   } else if (isTyping || isStreaming) {
     auraState = "thinking";
-  } else if (isUserSpeaking || isListening) {
+  } else if (phoneAudio.isUserSpeaking || phoneAudio.isListening) {
     auraState = "listening";
   }
 
@@ -141,29 +214,17 @@ export default function PhoneCallModal({
         if (isPlayingVoice) {
           handleTapToInterrupt();
         } else {
-          toggleMute();
+          phoneAudio.toggleMute();
         }
-      } else if (e.key === "Enter" && userTranscript.trim() && document.activeElement?.tagName !== "INPUT") {
+      } else if (e.key === "Enter" && phoneAudio.transcript.trim() && document.activeElement?.tagName !== "INPUT") {
         e.preventDefault();
-        submitTranscript();
+        phoneAudio.submitTranscript();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, isPlayingVoice, handleTapToInterrupt, userTranscript, submitTranscript]);
-
-  const toggleMute = useCallback(() => {
-    setIsMuted((prev) => {
-      const next = !prev;
-      if (next) {
-        stopListening();
-      } else {
-        startListening();
-      }
-      return next;
-    });
-  }, [startListening, stopListening]);
+  }, [isOpen, onClose, isPlayingVoice, handleTapToInterrupt, phoneAudio]);
 
   const handleSendKeypadText = useCallback(() => {
     const trimmed = textInput.trim();
@@ -172,6 +233,68 @@ export default function PhoneCallModal({
     setTextInput("");
     setShowKeypad(false);
   }, [textInput, onSendMessage]);
+
+  const handleSelectVoice = useCallback(
+    (voiceId: string) => {
+      onChangeVoice(voiceId);
+      setShowVoiceSelect(false);
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current = null;
+      }
+      setPreviewingVoice(null);
+    },
+    [onChangeVoice]
+  );
+
+  const handlePreviewVoice = useCallback(
+    async (e: React.MouseEvent, voice: CallVoice) => {
+      e.stopPropagation();
+      if (previewingVoice === voice.id) {
+        if (previewAudioRef.current) {
+          previewAudioRef.current.pause();
+          previewAudioRef.current = null;
+        }
+        setPreviewingVoice(null);
+        return;
+      }
+
+      setPreviewingVoice(voice.id);
+      try {
+        const res = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: voice.previewText,
+            voice: voice.id,
+          }),
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          previewAudioRef.current = audio;
+          audio.onended = () => {
+            setPreviewingVoice(null);
+            URL.revokeObjectURL(url);
+          };
+          audio.onerror = () => {
+            setPreviewingVoice(null);
+            URL.revokeObjectURL(url);
+          };
+          await audio.play();
+        } else {
+          setPreviewingVoice(null);
+        }
+      } catch {
+        setPreviewingVoice(null);
+      }
+    },
+    [previewingVoice]
+  );
+
+  // Active voice display name
+  const currentVoiceObj = CALL_VOICES.find((v) => v.id === selectedVoice) || CALL_VOICES[0];
 
   if (!isOpen) return null;
 
@@ -193,6 +316,7 @@ export default function PhoneCallModal({
       >
         {/* Left: Minimize / Return to Chat timeline */}
         <button
+          type="button"
           onClick={onClose}
           className="flex h-10 w-10 items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all active:scale-95"
           title="Minimize call to chat (Esc)"
@@ -224,9 +348,9 @@ export default function PhoneCallModal({
                     ? "speaking"
                     : isTyping || isStreaming
                     ? "thinking"
-                    : isMuted
+                    : phoneAudio.isMuted
                     ? "muted"
-                    : isUserSpeaking
+                    : phoneAudio.isUserSpeaking
                     ? "listening"
                     : "connected"}
                 </span>
@@ -236,57 +360,86 @@ export default function PhoneCallModal({
         </div>
 
         {/* Right: Voice Settings Popover */}
-        <div className="relative">
+        <div className="relative" ref={dropdownRef}>
           <button
-            onClick={() => setShowVoiceSelect((prev) => !prev)}
-            className="flex items-center gap-1.5 rounded-full bg-white/5 border border-white/10 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10 hover:text-white transition-all active:scale-95"
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowVoiceSelect((prev) => !prev);
+            }}
+            className="flex items-center gap-1.5 rounded-full bg-white/5 border border-white/10 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 hover:text-white transition-all active:scale-95"
             title="Switch Samantha's voice"
           >
             <span className="text-[11px] font-medium tracking-wide">
-              {selectedVoice.includes("Ava") ? "Ava" : "Jenny"}
+              {currentVoiceObj.name}
             </span>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 opacity-60">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className={`h-3 w-3 opacity-60 transition-transform duration-200 ${showVoiceSelect ? "rotate-180" : ""}`}
+            >
               <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
             </svg>
           </button>
 
           {showVoiceSelect && (
-            <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-[#201815] p-2 shadow-2xl border border-white/10 z-20 animate-in fade-in zoom-in-95 backdrop-blur-xl">
-              <button
-                onClick={() => {
-                  onChangeVoice("en-US-AvaMultilingualNeural");
-                  setShowVoiceSelect(false);
-                }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-colors ${
-                  selectedVoice.includes("Ava")
-                    ? "bg-[#C95D4A] text-white font-medium"
-                    : "text-white/80 hover:bg-white/5"
-                }`}
-              >
-                <div>
-                  <div className="font-medium">Ava (Neural)</div>
-                  <div className="text-[10px] opacity-75">Intimate, breathy & expressive</div>
-                </div>
-                {selectedVoice.includes("Ava") && <span>✓</span>}
-              </button>
+            <div
+              className="absolute right-0 top-full mt-2 w-72 max-h-[380px] overflow-y-auto rounded-2xl bg-[#1C1411]/95 p-2 shadow-2xl border border-white/15 z-30 animate-in fade-in zoom-in-95 backdrop-blur-2xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-2 py-1.5 text-[10px] font-medium uppercase tracking-wider text-white/40 border-b border-white/10 mb-1">
+                Select Samantha's Voice
+              </div>
 
-              <button
-                onClick={() => {
-                  onChangeVoice("en-US-JennyNeural");
-                  setShowVoiceSelect(false);
-                }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-colors mt-1 ${
-                  selectedVoice.includes("Jenny")
-                    ? "bg-[#C95D4A] text-white font-medium"
-                    : "text-white/80 hover:bg-white/5"
-                }`}
-              >
-                <div>
-                  <div className="font-medium">Jenny (Neural)</div>
-                  <div className="text-[10px] opacity-75">Warm, clear & conversational</div>
-                </div>
-                {selectedVoice.includes("Jenny") && <span>✓</span>}
-              </button>
+              {CALL_VOICES.map((voice) => {
+                const isSelected = selectedVoice === voice.id || selectedVoice.includes(voice.name);
+                const isPreviewing = previewingVoice === voice.id;
+
+                return (
+                  <div
+                    key={voice.id}
+                    className={`flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors my-1 ${
+                      isSelected
+                        ? "bg-[#C95D4A] text-white font-medium shadow-md shadow-[#C95D4A]/20"
+                        : "text-white/85 hover:bg-white/10"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleSelectVoice(voice.id)}
+                      className="flex-1 text-left pr-2 outline-none"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-xs">{voice.label}</span>
+                        {isSelected && <span className="text-[11px] text-white font-bold">✓</span>}
+                      </div>
+                      <div className={`text-[10px] mt-0.5 line-clamp-1 ${isSelected ? "text-white/80" : "text-white/50"}`}>
+                        {voice.description}
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => handlePreviewVoice(e, voice)}
+                      title={isPreviewing ? "Stop voice preview" : "Listen to sample"}
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-all active:scale-90 ${
+                        isSelected
+                          ? "bg-white/20 text-white hover:bg-white/30"
+                          : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
+                      }`}
+                    >
+                      {isPreviewing ? (
+                        <span className="flex h-2.5 w-2.5 rounded-sm bg-white animate-pulse" />
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5 ml-0.5">
+                          <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -295,7 +448,7 @@ export default function PhoneCallModal({
       {/* ── Main Call Center: Luminous Breathing Audio Aura & Live Subtitles ── */}
       <main className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-w-xl mx-auto w-full">
         {/* Permission Request Needed Notice */}
-        {micPermission === "prompt" && (
+        {phoneAudio.micPermission === "prompt" && (
           <div
             className="mb-4 max-w-sm rounded-2xl bg-white/10 border border-white/15 p-4 text-center backdrop-blur-md animate-in fade-in"
             onClick={(e) => e.stopPropagation()}
@@ -308,8 +461,7 @@ export default function PhoneCallModal({
               type="button"
               onClick={async (e) => {
                 e.stopPropagation();
-                const ok = await onRequestMicPermission?.();
-                if (ok) startListening();
+                await phoneAudio.requestMicPermission();
               }}
               className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#C95D4A] px-5 py-2 text-xs font-medium text-white shadow-lg hover:bg-[#B34332] active:scale-95 transition-all"
             >
@@ -319,7 +471,7 @@ export default function PhoneCallModal({
         )}
 
         {/* Permission Blocked Notice */}
-        {micPermission === "denied" && (
+        {phoneAudio.micPermission === "denied" && (
           <div
             className="mb-4 max-w-sm rounded-2xl bg-rose-950/40 border border-rose-500/30 p-4 text-center text-xs text-rose-200 backdrop-blur-md animate-in fade-in"
             onClick={(e) => e.stopPropagation()}
@@ -343,7 +495,7 @@ export default function PhoneCallModal({
           <AudioAura
             state={auraState}
             getAudioVolume={getVoiceVolume}
-            getMicVolume={getMicVolume}
+            getMicVolume={phoneAudio.getMicVolume}
             size={280}
           />
         </div>
@@ -355,27 +507,27 @@ export default function PhoneCallModal({
               <p className="text-base sm:text-lg font-light text-white/95 leading-relaxed italic animate-in fade-in font-serif">
                 “{currentVoiceSentence}”
               </p>
-            ) : userTranscript ? (
+            ) : phoneAudio.transcript ? (
               <div className="animate-in fade-in flex flex-col items-center gap-2">
                 <p className="text-base sm:text-lg font-normal text-[#F2B5A5] leading-relaxed">
-                  “{userTranscript}”
+                  “{phoneAudio.transcript}”
                 </p>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    submitTranscript();
+                    phoneAudio.submitTranscript();
                   }}
                   className="rounded-full bg-[#C95D4A]/80 hover:bg-[#C95D4A] px-3.5 py-1 text-[11px] text-white/90 shadow transition-all active:scale-95"
                 >
                   Send ↵
                 </button>
               </div>
-            ) : isListening && !isMuted ? (
+            ) : phoneAudio.isListening && !phoneAudio.isMuted ? (
               <p className="text-xs sm:text-sm font-light text-white/40 tracking-wide">
                 speak freely · Samantha is listening
               </p>
-            ) : isMuted ? (
+            ) : phoneAudio.isMuted ? (
               <p className="text-xs sm:text-sm font-light text-rose-300/60 tracking-wide">
                 microphone muted · tap unmute below
               </p>
@@ -428,20 +580,20 @@ export default function PhoneCallModal({
           {/* 1. Mute Button */}
           <button
             type="button"
-            onClick={toggleMute}
+            onClick={phoneAudio.toggleMute}
             className={`flex flex-col items-center gap-1.5 transition-all active:scale-90 ${
-              isMuted ? "text-rose-400" : "text-white/75 hover:text-white"
+              phoneAudio.isMuted ? "text-rose-400" : "text-white/75 hover:text-white"
             }`}
-            title={isMuted ? "Unmute microphone (Space)" : "Mute microphone (Space)"}
+            title={phoneAudio.isMuted ? "Unmute microphone (Space)" : "Mute microphone (Space)"}
           >
             <div
               className={`flex h-13 w-13 items-center justify-center rounded-full border transition-all ${
-                isMuted
+                phoneAudio.isMuted
                   ? "bg-rose-500/20 border-rose-500/40 text-rose-400 ring-4 ring-rose-500/10"
                   : "bg-white/10 border-white/15 hover:bg-white/15"
               }`}
             >
-              {isMuted ? (
+              {phoneAudio.isMuted ? (
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
                   <path d="M10 2a3 3 0 00-3 3v4.293l4.854 4.853A3 3 0 0013 9.293V5a3 3 0 00-3-3zM4.22 3.22a.75.75 0 00-1.06 1.06l13.5 13.5a.75.75 0 101.06-1.06L4.22 3.22zM8.5 13.793l1.5 1.5V17h-2a.75.75 0 000 1.5h4a.75.75 0 000-1.5h-2v-1.707l.793-.793A4.5 4.5 0 015.5 10a.75.75 0 00-1.5 0 6 6 0 005.25 5.95v-2.157z" />
                 </svg>
@@ -453,7 +605,7 @@ export default function PhoneCallModal({
               )}
             </div>
             <span className="text-[11px] font-light tracking-wider opacity-75">
-              {isMuted ? "unmute" : "mute"}
+              {phoneAudio.isMuted ? "unmute" : "mute"}
             </span>
           </button>
 

@@ -555,9 +555,8 @@ export default function ChatPage() {
 
   const toggleEarbud = useCallback(() => {
     voicePlayer.unlockAudio();
-    if (speechRec.micPermission !== "granted") {
-      speechRec.requestMicPermission().catch(() => {});
-    }
+    // Stop webkitSpeechRecognition so it never triggers search chimes or conflicts with phone call audio
+    speechRec.stopListening();
     setEarbudOpen((prev) => {
       const willOpen = !prev;
       if (willOpen && messages.length <= 1) {
@@ -566,6 +565,8 @@ export default function ChatPage() {
         setTimeout(() => {
           voicePlayer.speakText(greetingText);
         }, 700);
+      } else if (!willOpen) {
+        voicePlayer.stopSpeaking();
       }
       return willOpen;
     });

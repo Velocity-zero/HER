@@ -13,10 +13,26 @@ export interface UseVoicePlayerOptions {
 export function useVoicePlayer(options: UseVoicePlayerOptions = {}) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSentence, setCurrentSentence] = useState("");
-  const [selectedVoice, setSelectedVoice] = useState(options.voice || "en-US-AvaMultilingualNeural");
+  const [selectedVoice, setSelectedVoiceState] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("her-selected-voice");
+      if (saved) return saved;
+    }
+    return options.voice || "en-US-AvaMultilingualNeural";
+  });
 
   const playerRef = useRef<VoicePlayer | null>(null);
   const chunkerRef = useRef<SentenceChunker | null>(null);
+
+  const setSelectedVoice = useCallback((voice: string) => {
+    setSelectedVoiceState(voice);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("her-selected-voice", voice);
+      } catch {}
+    }
+    playerRef.current?.updateOptions({ voice });
+  }, []);
 
   // Initialize player and chunker once
   useEffect(() => {
