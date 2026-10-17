@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
         const fileName = isWav ? "audio.wav" : "audio.webm";
 
         const groqFormData = new FormData();
-        const audioBlob = new Blob([audioBuffer], { type: mimeType });
+        const audioBlob = new Blob([new Uint8Array(audioBuffer)], { type: mimeType });
         groqFormData.append("file", audioBlob, fileName);
         groqFormData.append("model", "whisper-large-v3-turbo");
         groqFormData.append("response_format", "json");
