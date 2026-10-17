@@ -1,178 +1,116 @@
 # HER — Your AI Companion
 
 A warm, emotionally immersive AI companion web app inspired by the film *Her* (2013).  
-Built with **Next.js**, **TypeScript**, **Tailwind CSS**, and **NVIDIA NIM** (Qwen3-Next-80B-A3B-Instruct).
+Built with **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS 4**, **NVIDIA NIM**, and **Groq Whisper**.
+
+---
+
+## Key Features
+
+- **Hands-Free Phone Call Mode**:
+  - Full-duplex conversational voice call with Samantha.
+  - Zero Google Assistant search chimes or earcons (uses silent `getUserMedia` Web Audio stream).
+  - 450ms pre-roll rolling ring buffer so your opening words (*"Hi"*, *"Hey"*, *"Samantha"*) are never clipped.
+  - Real-time barge-in interruption: start talking while Samantha is speaking, and she naturally pauses and listens.
+  - Luminous breathing AudioAura visualizer attuning to your real-time voice volume.
+- **Smart Memory & Relationship Architecture**:
+  - Cross-conversation persistent memory (identities, preferences, life milestones, emotional textures).
+  - Semantic vector search and weighted narrative memory injection into the system prompt.
+  - Progressive rapport bonding (Levels 0–4) dynamically shaping intimacy, trust, and shared history.
+  - Vocal emotion attunement: detects your speech pace, energy, and tone to naturally mirror your mood.
+- **Neural HD Voice Synthesis**:
+  - Expressive Microsoft Azure Neural voices (*Ava, Emma, Jenny, Aria, Sonia, Brian*).
+  - Conversational text cleaner strips markdown asterisks, URLs, and emojis so speech flows naturally without spelling out stage directions.
+  - Fast-server pooling and in-memory audio caching for instant audio delivery without robotic fallback.
+- **Image Studio & Multimodal Vision**:
+  - Scene generation and collaborative drawing powered by NVIDIA Flux / SD.
+  - Multimodal vision awareness for analyzing photos and camera uploads.
 
 ---
 
 ## Prerequisites
 
-Make sure your machine has these installed before starting:
-
-| Tool | Version | How to check | Install from |
-|------|---------|--------------|--------------|
-| **Node.js** | 18 or newer | `node -v` | [nodejs.org](https://nodejs.org/) |
-| **npm** | 9 or newer (comes with Node) | `npm -v` | Included with Node.js |
+- **Node.js** 18 or newer (`node -v`)
+- **npm** 9 or newer (`npm -v`)
+- **Python 3.10+** (optional, for local STT/TTS fallback servers)
 
 ---
 
-## Setup (step by step)
+## Setup (Step-by-Step)
 
-### 1. Unzip the project
-
-Unzip the folder wherever you like. You should see a folder called `HER` with files like `package.json`, `next.config.ts`, `src/`, etc.
-
-### 2. Open a terminal inside the project folder
-
-- **Windows:** Open the `HER` folder in File Explorer → click the address bar → type `cmd` or `powershell` → press Enter.
-- **Mac/Linux:** Open Terminal → `cd /path/to/HER`
-
-### 3. Install dependencies
+### 1. Install dependencies
 
 ```bash
 npm install
 ```
 
-This will create a `node_modules` folder with all required packages. It may take a minute or two.
+### 2. Configure environment variables
 
-### 4. Create your environment file
+Create a `.env.local` file in the project root (see [.env.local.example](file:///d:/HER/.env.local.example)):
 
-Create a file called **`.env.local`** in the project root (right next to `package.json`) with this content:
+```env
+# ── Primary Provider (NVIDIA NIM) ──
+PRIMARY_PROVIDER=nvidia
+NVIDIA_API_KEY=your_nvidia_master_key_here
+NVIDIA_CHAT_MODEL=meta/llama-3.2-11b-vision-instruct
+NVIDIA_VISION_MODEL=meta/llama-3.2-11b-vision-instruct
 
+# ── Speech-to-Text (Phone Call Mode) ──
+# 100% free with no credit card at: https://console.groq.com/keys
+GROQ_API_KEY=your_groq_api_key_here
+
+# ── Supabase (Database & Persistence) ──
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
-HER_PROVIDER=nvidia
-NVIDIA_CHAT_API_KEY=your_chat_key_here
-```
 
-**To get a free NVIDIA NIM API key:**
-1. Go to [NVIDIA Build](https://build.nvidia.com/)
-2. Sign in or create an NVIDIA account
-3. Search for **Qwen3-Next-80B-A3B-Instruct** and click **"Get API Key"**
-4. Copy the key and paste it in place of `your_chat_key_here`
-
-> ⚠️ **Important:** The `.env.local` file is intentionally excluded from the zip for security. Each person needs their own API key.
-
-### 5. Start the development server
+### 3. Start development server
 
 ```bash
 npm run dev
 ```
 
-You should see output like:
-
-```
-  ▲ Next.js 16.x.x
-  - Local:   http://localhost:3000
-```
-
-### 6. Open the app
-
-Open your browser and go to:
-
-```
-http://localhost:3000
-```
-
-Click **"begin"** on the landing page to enter the chat. That's it — you're talking to HER.
+Open `http://localhost:3000` (or your local network IP on mobile).
 
 ---
 
-## Project structure (quick overview)
+## Phone Call Setup & Voice Options
 
-```
-HER/
-├── src/
-│   ├── app/                  ← Pages & API routes
-│   │   ├── page.tsx              Landing page
-│   │   ├── chat/page.tsx         Chat interface
-│   │   ├── api/chat/route.ts     NVIDIA NIM API endpoint
-│   │   └── globals.css           Design system & palette
-│   ├── components/           ← UI components
-│   │   └── chat/                 ChatHeader, ChatWindow, ChatInput,
-│   │                             MessageBubble, TypingIndicator
-│   └── lib/                  ← Core logic
-│       ├── provider.ts           AI provider (NVIDIA/Mistral)
-│       ├── prompts/              HER's personality & voice
-│       ├── context.ts            Conversation context builder
-│       ├── conversation.ts       Payload builder
-│       ├── chat-store.ts         localStorage persistence
-│       └── types.ts              TypeScript types
-├── .env.local                ← API keys (you create this)
-├── package.json
-├── next.config.ts
-└── tsconfig.json
-```
+1. Tap the **phone icon** at the top right of the chat header to initiate a call with Samantha.
+2. Grant microphone permission when prompted (browser mic indicator turns on with zero chime).
+3. Switch voices anytime using the **Voice drawer** at the top right:
+   - **Ava (Neural)** — Warm, intimate, breathy & emotionally expressive (*Default*)
+   - **Emma (Neural)** — Bright, cheerful & natural conversational
+   - **Jenny (Neural)** — Gentle, calm, soothing companion
+   - **Aria (Neural)** — Confident, lively & engaging
+   - **Sonia (Neural)** — Warm British accent, elegant & thoughtful
+   - **Brian (Neural)** — Deep, relaxed, warm male companion
 
 ---
 
-## Common commands
+## Common Commands
 
 | Command | What it does |
 |---------|-------------|
 | `npm run dev` | Start development server (http://localhost:3000) |
-| `npm run build` | Build for production |
-| `npm start` | Run the production build |
-| `npm run lint` | Check code for issues |
+| `npm test` | Run complete unit test suite (193 tests) |
+| `npm run build` | Build production bundle |
+| `npm start` | Run production build |
+| `npm run lint` | Run ESLint static analysis |
 
 ---
 
-## What to zip / what NOT to zip
+## Tech Stack
 
-When sharing this project, **exclude** these (they're auto-generated or private):
-
-| Exclude | Why |
-|---------|-----|
-| `node_modules/` | Huge — gets recreated by `npm install` |
-| `.next/` | Build cache — gets recreated by `npm run dev` |
-| `.env.local` | Contains your private API key |
-| `test-*.mjs` | Dev-only test scripts (optional to include) |
-
-Everything else should be included in the zip.
-
----
-
-## Troubleshooting
-
-**"Module not found" errors**  
-→ Run `npm install` again. You may have missed step 3.
-
-**"Missing NVIDIA_CHAT_API_KEY" or API errors**  
-→ Make sure `.env.local` exists in the project root with a valid key. Restart the dev server after creating/editing it.
-
-**Port 3000 already in use**  
-→ Either stop whatever's using port 3000 or run: `npm run dev -- -p 3001`
-
-**Blank page or hydration errors**  
-→ Delete the `.next` folder and restart:
-```bash
-# Mac/Linux
-rm -rf .next
-npm run dev
-```
-```powershell
-# Windows PowerShell
-Remove-Item -Recurse -Force .next
-npm run dev
-```
-
----
-
-## Tech stack
-
-- **Next.js 16** — App Router, React Server Components
-- **React 19** — UI framework
-- **TypeScript 5** — Type safety
-- **Tailwind CSS 4** — Styling (warm analog palette)
-- **NVIDIA NIM / Qwen3-Next-80B-A3B-Instruct** — AI chat model via NVIDIA API
-- **NVIDIA Gemma 3 27B** — Vision analysis
-- **NVIDIA Stable Diffusion / Flux** — Image generation
+- **Next.js 16** (Turbopack, App Router)
+- **React 19**
+- **TypeScript 5**
+- **Tailwind CSS 4**
+- **NVIDIA NIM** (Llama 3.2 11B Vision Instruct, Nemotron)
+- **Groq Whisper** (`whisper-large-v3-turbo`)
+- **Edge Neural TTS**
+- **Supabase** (PostgreSQL, pgvector, Realtime storage)
 
 ---
 
 *Made with warmth.* 🧡
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
