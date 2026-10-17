@@ -64,7 +64,7 @@ interface PhoneCallModalProps {
   messages: Message[];
   isStreaming: boolean;
   isTyping: boolean;
-  onSendMessage: (text: string) => void;
+  onSendMessage?: (text: string) => void;
   isPlayingVoice: boolean;
   currentVoiceSentence: string;
   selectedVoice: string;
@@ -91,7 +91,6 @@ export default function PhoneCallModal({
   messages,
   isStreaming,
   isTyping,
-  onSendMessage,
   isPlayingVoice,
   currentVoiceSentence,
   selectedVoice,
@@ -113,8 +112,6 @@ export default function PhoneCallModal({
   const [isMuted, setIsMuted] = useState(false);
   const [showVoiceSelect, setShowVoiceSelect] = useState(false);
   const [showCaptions, setShowCaptions] = useState(true);
-  const [showKeypad, setShowKeypad] = useState(false);
-  const [textInput, setTextInput] = useState("");
   const [callDuration, setCallDuration] = useState(0);
   const [callStatus, setCallStatus] = useState<"connecting" | "connected">("connecting");
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
@@ -231,13 +228,6 @@ export default function PhoneCallModal({
     });
   }, [startListening, stopListening]);
 
-  const handleSendKeypadText = useCallback(() => {
-    const trimmed = textInput.trim();
-    if (!trimmed) return;
-    onSendMessage(trimmed);
-    setTextInput("");
-    setShowKeypad(false);
-  }, [textInput, onSendMessage]);
 
   const handleSelectVoice = useCallback(
     (voiceId: string) => {
@@ -435,13 +425,15 @@ export default function PhoneCallModal({
             <p className="text-[11px] text-rose-300/80 mt-1">
               Please allow microphone access in your browser address bar to speak on the call.
             </p>
-            <button
-              type="button"
-              onClick={() => setShowKeypad(true)}
-              className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white hover:bg-white/20 transition-all"
-            >
-              ⌨️ Type to Speak
-            </button>
+            {onRequestMicPermission && (
+              <button
+                type="button"
+                onClick={() => onRequestMicPermission()}
+                className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-1.5 text-xs text-white hover:bg-white/20 transition-all"
+              >
+                🎙️ Request Access Again
+              </button>
+            )}
           </div>
         )}
 
@@ -518,36 +510,6 @@ export default function PhoneCallModal({
         className="relative z-10 flex flex-col items-center px-6 pb-8 pt-3 max-w-md mx-auto w-full"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Whisper text composer for quiet environments */}
-        {showKeypad && (
-          <div className="mb-4 w-full animate-in fade-in slide-in-from-bottom-2">
-            <div className="flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2.5 backdrop-blur-xl shadow-xl">
-              <input
-                type="text"
-                value={textInput}
-                onChange={(e) => setTextInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleSendKeypadText();
-                  }
-                }}
-                placeholder="type a note to Samantha…"
-                className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/40"
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={handleSendKeypadText}
-                disabled={!textInput.trim()}
-                className="rounded-full bg-[#C95D4A] px-3.5 py-1 text-xs font-medium text-white shadow hover:bg-[#B34332] transition-all disabled:opacity-30"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Circular Action Buttons */}
         <div className="flex items-center justify-center gap-7 sm:gap-9 mb-4">
           {/* 1. Mute Button */}
@@ -582,28 +544,21 @@ export default function PhoneCallModal({
             </span>
           </button>
 
-          {/* 2. Keypad / Chat toggle */}
+          {/* 2. Voice Drawer Toggle */}
           <button
             type="button"
-            onClick={() => setShowKeypad((prev) => !prev)}
-            className={`flex flex-col items-center gap-1.5 transition-all active:scale-90 ${
-              showKeypad ? "text-[#E0856E]" : "text-white/75 hover:text-white"
-            }`}
-            title="Type a message instead"
+            onClick={() => setShowVoiceSelect(true)}
+            className="flex flex-col items-center gap-1.5 transition-all active:scale-90 text-white/75 hover:text-white"
+            title="Change voice"
           >
-            <div
-              className={`flex h-13 w-13 items-center justify-center rounded-full border transition-all ${
-                showKeypad
-                  ? "bg-[#C95D4A]/25 border-[#C95D4A]/50 text-[#E0856E] ring-4 ring-[#C95D4A]/15"
-                  : "bg-white/10 border-white/15 hover:bg-white/15"
-              }`}
-            >
+            <div className="flex h-13 w-13 items-center justify-center rounded-full border border-white/15 bg-white/10 hover:bg-white/15 transition-all">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-                <path d="M2 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6.414l-2.707 2.707A1 1 0 0 1 2 16V5z" />
+                <path d="M7 4a3 3 0 016 0v6a3 3 0 11-6 0V4z" />
+                <path d="M5.5 9.643a.75.75 0 00-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 000 1.5h4.5a.75.75 0 000-1.5h-1.5v-1.546A6.001 6.001 0 0016 10v-.357a.75.75 0 00-1.5 0V10a4.5 4.5 0 01-9 0v-.357z" />
               </svg>
             </div>
             <span className="text-[11px] font-light tracking-wider opacity-75">
-              keypad
+              voice
             </span>
           </button>
 

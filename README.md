@@ -8,20 +8,21 @@ Built with **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS 4**, **N
 ## Key Features
 
 - **Hands-Free Phone Call Mode**:
-  - Full-duplex conversational voice call with Samantha.
+  - Full-duplex conversational voice call with Samantha (Gemini Live style — pure voice, zero text input/keypad fluff).
   - Zero Google Assistant search chimes or earcons (uses silent `getUserMedia` Web Audio stream).
   - 450ms pre-roll rolling ring buffer so your opening words (*"Hi"*, *"Hey"*, *"Samantha"*) are never clipped.
-  - Real-time barge-in interruption: start talking while Samantha is speaking, and she naturally pauses and listens.
+  - Echo-shielded barge-in interruption: intentional user speech or tapping the screen naturally pauses Samantha.
   - Luminous breathing AudioAura visualizer attuning to your real-time voice volume.
 - **Smart Memory & Relationship Architecture**:
   - Cross-conversation persistent memory (identities, preferences, life milestones, emotional textures).
   - Semantic vector search and weighted narrative memory injection into the system prompt.
   - Progressive rapport bonding (Levels 0–4) dynamically shaping intimacy, trust, and shared history.
   - Vocal emotion attunement: detects your speech pace, energy, and tone to naturally mirror your mood.
-- **Neural HD Voice Synthesis**:
-  - Expressive Microsoft Azure Neural voices (*Ava, Emma, Jenny, Aria, Sonia, Brian*).
+- **Decoupled TTS Engine & Neural HD Voice Synthesis**:
+  - Modular `TTSManager` architecture: separates call playback & sentence pipelining from voice model backends.
+  - Pluggable provider system ready for Option A in-browser WebGPU/ONNX models (Chatterbox-Nano / Kokoro) alongside Cloud Neural HD voices (*Ava, Emma, Jenny, Aria, Sonia, Brian*).
   - Conversational text cleaner strips markdown asterisks, URLs, and emojis so speech flows naturally without spelling out stage directions.
-  - Fast-server pooling and in-memory audio caching for instant audio delivery without robotic fallback.
+  - Gapless sentence streaming with watchdog timeout protection against browser audio pipeline deadlocks.
 - **Image Studio & Multimodal Vision**:
   - Scene generation and collaborative drawing powered by NVIDIA Flux / SD.
   - Multimodal vision awareness for analyzing photos and camera uploads.

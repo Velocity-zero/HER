@@ -136,19 +136,24 @@ export function useSpeechRecognition({
   const noiseFloorRef = useRef(0.008);
 
   // Manage playback active state and acoustic echo grace period
+  const playbackStartTimeRef = useRef<number>(0);
+  const bargeInStreakRef = useRef<number>(0);
+
   useEffect(() => {
     isPlaybackActiveRef.current = isPlaybackActive;
     if (isPlaybackActive) {
+      playbackStartTimeRef.current = Date.now();
+      bargeInStreakRef.current = 0;
       isGracePeriodRef.current = true;
       silenceStartRef.current = null;
       isSpeakingRef.current = false;
       setIsUserSpeaking(false);
       utteranceSlicesRef.current = [];
     } else {
-      // 300ms grace window so speaker reverb/decay doesn't trip user speech detection
+      // 400ms grace window so speaker reverb/decay doesn't trip user speech detection
       const timer = setTimeout(() => {
         isGracePeriodRef.current = false;
-      }, 300);
+      }, 400);
       return () => clearTimeout(timer);
     }
   }, [isPlaybackActive]);
@@ -316,9 +321,16 @@ export function useSpeechRecognition({
 
         // While Samantha is speaking: check for acoustic barge-in interruption
         if (isPlaybackActiveRef.current) {
-          if (rms > 0.045) {
-            // User interrupted Samantha
-            onSpeechStartRef.current?.();
+          const elapsed = Date.now() - playbackStartTimeRef.current;
+          // Protect initial 1.5s from acoustic speaker bleed, and require intentional loud user voice
+          if (elapsed > 1500 && rms > 0.14) {
+            bargeInStreakRef.current = (bargeInStreakRef.current || 0) + 1;
+            if (bargeInStreakRef.current >= 2) {
+              bargeInStreakRef.current = 0;
+              onSpeechStartRef.current?.();
+            }
+          } else {
+            bargeInStreakRef.current = 0;
           }
           return;
         }

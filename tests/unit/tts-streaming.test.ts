@@ -52,3 +52,39 @@ test("cleanTextForSpeech — cleans markdown, bold, emojis, URLs", () => {
   const cleaned = cleanTextForSpeech(input);
   assert.strictEqual(cleaned, "Hey Samantha! Look at this page code_sample ... that is great!");
 });
+
+test("TTS Architecture — Decoupled TTSManager registers and delegates to active providers", async () => {
+  const { TTSManager } = await import("@/lib/tts/tts-manager");
+  const manager = TTSManager.getInstance();
+
+  const providers = manager.getProviders();
+  assert(providers.length >= 2, "Expected at least 2 default providers registered");
+
+  const active = manager.getActiveProvider();
+  assert.strictEqual(active.id, "edge-neural");
+
+  // Custom mock provider
+  let mockSynthesized = false;
+  const mockProvider = {
+    id: "mock-custom-model",
+    name: "Custom Cloned Voice Model",
+    type: "local" as const,
+    isAvailable: () => true,
+    synthesize: async () => {
+      mockSynthesized = true;
+      return new Uint8Array([1, 2, 3]).buffer;
+    },
+  };
+
+  manager.registerProvider(mockProvider);
+  assert.strictEqual(manager.setActiveProvider("mock-custom-model"), true);
+  assert.strictEqual(manager.getActiveProvider().id, "mock-custom-model");
+
+  const result = await manager.synthesize("test sentence", { voice: "custom" });
+  assert.strictEqual(mockSynthesized, true);
+  assert(result !== null);
+
+  // Restore default
+  manager.setActiveProvider("edge-neural");
+});
+

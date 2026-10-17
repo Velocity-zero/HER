@@ -10,6 +10,8 @@
  * - Automatic fallback to browser SpeechSynthesis if network fails
  */
 
+import { ttsManager } from "./tts";
+
 export interface VoicePlayerOptions {
   voice?: string;
   rate?: string;
@@ -97,6 +99,7 @@ export class VoicePlayer {
       source.connect(ctx.destination);
       source.start(0);
     } catch {}
+    await ttsManager.unlockAudio().catch(() => {});
   }
 
   /**
@@ -117,7 +120,7 @@ export class VoicePlayer {
       text,
     };
 
-    // Prefetch audio buffer in the background immediately
+    // Prefetch audio buffer in the background immediately via decoupled TTSManager
     item.bufferPromise = this.fetchAndDecodeAudio(text, this.abortController.signal);
 
     this.queue.push(item);
@@ -128,29 +131,29 @@ export class VoicePlayer {
   }
 
   /**
-   * Fetches audio buffer from /api/tts and decodes via Web Audio API.
-   * Automatically retries once on transient network/WebSocket drops.
+   * Fetches audio buffer from TTSManager and decodes via Web Audio API.
+   * Automatically retries once on transient network drops.
    */
   private async fetchAndDecodeAudio(text: string, signal: AbortSignal, retryCount = 0): Promise<AudioBuffer | null> {
     try {
-      const res = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
+      const arrayBuffer = await ttsManager.synthesize(
+        text,
+        {
           voice: this.options.voice || "en-US-AvaMultilingualNeural",
           rate: this.options.rate || "+0%",
           pitch: this.options.pitch || "+0Hz",
-        }),
-        signal,
-      });
+        },
+        signal
+      );
 
-      if (!res.ok) {
-        throw new Error(`TTS HTTP error: ${res.status}`);
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error("No audio returned from TTS engine");
       }
 
-      const arrayBuffer = await res.arrayBuffer();
       const ctx = this.initAudioContext();
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => {});
+      }
       // Use slice to avoid detaching buffer issues on WebKit
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
       return audioBuffer;
@@ -162,7 +165,7 @@ export class VoicePlayer {
         await new Promise((r) => setTimeout(r, 300));
         return this.fetchAndDecodeAudio(text, signal, retryCount + 1);
       }
-      console.warn("[VoicePlayer] Neural TTS fetch failed:", err);
+      console.warn("[VoicePlayer] TTS synthesis error:", err);
       return null;
     }
   }
@@ -194,7 +197,6 @@ export class VoicePlayer {
           await this.playBuffer(buffer);
           this.options.onSentenceEnd?.(current.text);
         } else {
-          // Never fall back to decade-old robotic OS voices (SAPI5)
           console.warn("[VoicePlayer] Skipping unrendered sentence:", current.text);
         }
       } catch (playErr) {
@@ -215,7 +217,7 @@ export class VoicePlayer {
   }
 
   /**
-   * Plays a single Web Audio buffer to completion.
+   * Plays a single Web Audio buffer to completion with watchdog protection.
    */
   private async playBuffer(buffer: AudioBuffer): Promise<void> {
     const ctx = this.initAudioContext();
@@ -229,23 +231,36 @@ export class VoicePlayer {
         return;
       }
 
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(this.analyser);
-      this.currentSource = source;
-
-      source.onended = () => {
+      let isFinished = false;
+      const finish = () => {
+        if (isFinished) return;
+        isFinished = true;
         if (this.currentSource === source) {
           this.currentSource = null;
         }
         resolve();
       };
 
+      // Watchdog timer: Guarantee queue never hangs if AudioContext suspended or audio ends late
+      const expectedDurationMs = Math.max(1000, Math.ceil(buffer.duration * 1000) + 700);
+      const watchdog = setTimeout(finish, expectedDurationMs);
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.analyser);
+      this.currentSource = source;
+
+      source.onended = () => {
+        clearTimeout(watchdog);
+        finish();
+      };
+
       try {
         source.start(0);
       } catch (err) {
+        clearTimeout(watchdog);
         console.warn("[VoicePlayer] Source start failed:", err);
-        resolve();
+        finish();
       }
     });
   }
